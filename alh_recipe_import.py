@@ -125,8 +125,28 @@ while len(result_json) > 990 and result["ingredients"]:
     result["ingredients"].pop()
     result_json = json.dumps(result, ensure_ascii=False)
 
-hass.states.set(
-    "input_text.alh_recipe_import_result",
-    result_json,
-    {"friendly_name": "ALH Recipe Import Result"}
+# Write result back to HA via REST API
+# Token: Langjähriger Zugriffstoken aus HA-Profil → /config/scripts/.alh_token
+import os
+
+token_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".alh_token")
+try:
+    with open(token_file) as f:
+        token = f.read().strip()
+except FileNotFoundError:
+    import sys
+    print(f"Fehler: Token-Datei nicht gefunden: {token_file}", file=sys.stderr)
+    raise SystemExit(1)
+
+api_url = "http://localhost:8123/api/states/input_text.alh_recipe_import_result"
+payload = json.dumps({"state": result_json}).encode("utf-8")
+req = urllib.request.Request(
+    api_url,
+    data=payload,
+    headers={
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    },
+    method="POST",
 )
+urllib.request.urlopen(req, timeout=10)

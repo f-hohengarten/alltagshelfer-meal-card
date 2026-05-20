@@ -179,7 +179,7 @@ class AlhMealCard extends HTMLElement {
 
     this._nutriSuggestion = null;
     this._importLoading   = false;
-    this._importResult    = null; // parsed recipe from URL import
+    this._importResult    = null;
   }
 
   _blankRecipeForm() {
@@ -214,11 +214,6 @@ class AlhMealCard extends HTMLElement {
   }
 
   set hass(hass) {
-    const importResultEl = this._hass
-      ? hass.states[this._config.recipe_entity]
-      : null;
-
-    // Watch for URL import result in input_text entity
     if (this._hass && this._importLoading) {
       const resultEntity = hass.states['input_text.alh_recipe_import_result'];
       const prev = this._hass.states['input_text.alh_recipe_import_result'];
@@ -226,7 +221,6 @@ class AlhMealCard extends HTMLElement {
         this._handleImportResult(resultEntity.state);
       }
     }
-
     const first = !this._hass;
     this._hass = hass;
     if (first && this._config.recipe_entity) this._subscribe();
@@ -676,10 +670,9 @@ class AlhMealCard extends HTMLElement {
               ${this._importLoading ? '…' : 'Importieren'}
             </button>
           </div>
-          ${this._importResult ? `
-            <div class="import-hint">Importiert: ${x(this._importResult.title)} — prüfe die Felder unten.</div>
-          ` : ''}
-          <div class="panel__divider"><span>oder manuell eingeben</span></div>
+          ${this._importResult?.error ? `<div class="import-error">${x(this._importResult.error)}</div>` : ''}
+          ${this._importResult?.title ? `<div class="import-hint">✓ Importiert: ${x(this._importResult.title)}</div>` : ''}
+          <div class="panel__divider"><span>oder manuell</span></div>
         ` : ''}
 
         <input class="form__title-input form__input" type="text" placeholder="Rezepttitel *"
@@ -989,14 +982,12 @@ class AlhMealCard extends HTMLElement {
     if (cancelRecipe) cancelRecipe.addEventListener('click', () => {
       this._activePanel = null;
       this._recipeForm  = this._blankRecipeForm();
-      this._importResult = null;
       this._render();
     });
 
     const deleteRecipe = root.querySelector('[data-action="delete-recipe"]');
     if (deleteRecipe) deleteRecipe.addEventListener('click', () => this._deleteRecipe(this._recipeForm.uid));
 
-    // URL import
     const importBtn = root.querySelector('[data-action="import-url"]');
     if (importBtn) importBtn.addEventListener('click', () => this._importUrl());
 
@@ -1079,7 +1070,6 @@ class AlhMealCard extends HTMLElement {
       note:  meta.note || '',
       ingredients: [...meta.ingredients],
       _ingName: '', _ingAmount: '', _ingUnit: 'g',
-      _importUrl: '',
     };
     this._activePanel = 'recipe-form';
     this._render();
@@ -1205,18 +1195,13 @@ class AlhMealCard extends HTMLElement {
     const url   = (urlEl?.value ?? this._recipeForm._importUrl).trim();
     if (!url) return;
     this._recipeForm._importUrl = url;
-    this._importLoading = true;
+    this._importLoading  = true;
+    this._importResult   = null;
     this._render();
-
     try {
       await this._hass.callService('shell_command', 'alh_recipe_import', { url });
-      // Result will arrive via input_text.alh_recipe_import_result state change → handled in set hass()
-      // Set a timeout fallback
       setTimeout(() => {
-        if (this._importLoading) {
-          this._importLoading = false;
-          this._render();
-        }
+        if (this._importLoading) { this._importLoading = false; this._render(); }
       }, 15000);
     } catch (e) {
       console.error('[alh-meal-card] import error', e);
@@ -1229,17 +1214,16 @@ class AlhMealCard extends HTMLElement {
     this._importLoading = false;
     try {
       const data = JSON.parse(jsonStr);
-      if (data.title) this._recipeForm.title = data.title;
-      if (data.ingredients && Array.isArray(data.ingredients)) {
-        this._recipeForm.ingredients = data.ingredients.map(i => ({
-          name:   i.name   ?? i,
-          amount: i.amount ?? '',
-          unit:   i.unit   ?? 'Stk',
-        }));
-      }
       this._importResult = data;
+      if (data.title) this._recipeForm.title = data.title;
+      if (Array.isArray(data.ingredients)) {
+        this._recipeForm.ingredients = data.ingredients.map(i => ({
+          name: i.name ?? String(i), amount: i.amount ?? '', unit: i.unit ?? 'Stk',
+        })).filter(i => i.name);
+      }
+      if (data.servings) this._recipeForm.srv = parseInt(data.servings) || 4;
     } catch (e) {
-      console.warn('[alh-meal-card] import result parse error', e);
+      this._importResult = { error: 'Antwort konnte nicht gelesen werden.' };
     }
     this._render();
   }
@@ -1677,6 +1661,9 @@ class AlhMealCard extends HTMLElement {
       .import__url { flex: 1; margin-bottom: 0; }
       .import-hint {
         font-size: 12px; color: #32D74B; padding: 4px 2px; margin-bottom: 2px;
+      }
+      .import-error {
+        font-size: 12px; color: var(--error-color, #f44336); padding: 4px 2px; margin-bottom: 2px;
       }
 
       /* ── Nutri hint ── */
