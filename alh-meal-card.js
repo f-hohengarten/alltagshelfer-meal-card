@@ -1199,7 +1199,13 @@ class AlhMealCard extends HTMLElement {
     this._importResult   = null;
     this._render();
     try {
-      await this._hass.callService('shell_command', 'alh_recipe_import', { url });
+      // Step 1: URL in input_text schreiben (kein Parameter-Problem mit shell_command)
+      await this._hass.callService('input_text', 'set_value', {
+        entity_id: 'input_text.alh_recipe_import_url',
+        value: url,
+      });
+      // Step 2: Shell-Script ohne Parameter aufrufen
+      await this._hass.callService('shell_command', 'alh_recipe_import', {});
       setTimeout(() => {
         if (this._importLoading) { this._importLoading = false; this._render(); }
       }, 15000);

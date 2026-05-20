@@ -18,7 +18,19 @@ import urllib.error
 
 # ── URL aus Kommandozeile ─────────────────────────────────────────────────────
 
-url = sys.argv[1].strip() if len(sys.argv) > 1 else ""
+def read_ha_state(entity_id, token):
+    req = urllib.request.Request(
+        f"http://localhost:8123/api/states/{entity_id}",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return json.loads(resp.read().decode())["state"]
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(script_dir, ".alh_token")) as f:
+    TOKEN = f.read().strip()
+
+url = read_ha_state("input_text.alh_recipe_import_url", TOKEN).strip()
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -81,17 +93,12 @@ def clean_text(s):
 
 
 def write_to_ha(result_json):
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    token_file = os.path.join(script_dir, ".alh_token")
-    with open(token_file) as f:
-        token = f.read().strip()
-
     payload = json.dumps({"state": result_json}).encode("utf-8")
     req = urllib.request.Request(
         "http://localhost:8123/api/states/input_text.alh_recipe_import_result",
         data=payload,
         headers={
-            "Authorization": f"Bearer {token}",
+            "Authorization": f"Bearer {TOKEN}",
             "Content-Type": "application/json",
         },
         method="POST",
