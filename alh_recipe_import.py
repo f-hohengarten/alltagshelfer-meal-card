@@ -26,11 +26,33 @@ def read_ha_state(entity_id, token):
     with urllib.request.urlopen(req, timeout=5) as resp:
         return json.loads(resp.read().decode())["state"]
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
-with open(os.path.join(script_dir, ".alh_token")) as f:
-    TOKEN = f.read().strip()
+LOG = "/config/scripts/alh_import.log"
 
-url = read_ha_state("sensor.alh_recipe_import_url", TOKEN).strip()
+def log(msg):
+    with open(LOG, "a") as f:
+        import datetime
+        f.write(f"{datetime.datetime.now().isoformat()} {msg}\n")
+
+log("=== Script gestartet ===")
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+token_file = os.path.join(script_dir, ".alh_token")
+log(f"Token-Datei: {token_file}")
+
+try:
+    with open(token_file) as f:
+        TOKEN = f.read().strip()
+    log(f"Token geladen ({len(TOKEN)} Zeichen)")
+except Exception as e:
+    log(f"FEHLER Token lesen: {e}")
+    sys.exit(1)
+
+try:
+    url = read_ha_state("sensor.alh_recipe_import_url", TOKEN).strip()
+    log(f"URL gelesen: {url[:80]}")
+except Exception as e:
+    log(f"FEHLER URL lesen: {e}")
+    sys.exit(1)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -113,8 +135,11 @@ if not url:
     result["error"] = "Keine URL angegeben."
 else:
     try:
+        log("Fetche URL...")
         html   = fetch_url(url)
+        log(f"HTML geladen ({len(html)} Zeichen)")
         recipe = extract_json_ld(html)
+        log(f"Recipe gefunden: {bool(recipe)}")
 
         if recipe:
             result["title"] = clean_text(recipe.get("name", ""))
@@ -141,8 +166,11 @@ while len(result_json) > 990 and result["ingredients"]:
     result["ingredients"].pop()
     result_json = json.dumps(result, ensure_ascii=False)
 
+log(f"Ergebnis: {result_json[:120]}")
 try:
     write_to_ha(result_json)
+    log("Ergebnis erfolgreich nach HA geschrieben.")
 except Exception as e:
+    log(f"FEHLER HA schreiben: {e}")
     print(f"HA-Schreibfehler: {e}", file=sys.stderr)
     sys.exit(1)
