@@ -412,7 +412,7 @@ class AlhMealCard extends HTMLElement {
               <div class="meal-entry" draggable="true" data-plan-uid="${x(p.uid)}"
                 data-iso="${x(iso)}" data-slot="${x(slot)}">
                 ${rmeta.img ? `<img class="meal-entry__img" src="${x(rmeta.img)}" alt=""
-                  loading="lazy" onerror="this.style.display='none'" />` : ''}
+                  loading="lazy" draggable="false" onerror="this.style.display='none'" />` : ''}
                 <div class="meal-entry__body">
                   <div class="meal-entry__title">${x(p.summary)}</div>
                   <div class="meal-entry__meta">
@@ -947,23 +947,29 @@ class AlhMealCard extends HTMLElement {
     // Drag and drop for meal entries
     root.querySelectorAll('.meal-entry[draggable]').forEach(el => {
       el.addEventListener('dragstart', e => {
-        this._dragPlanUid = el.dataset.planUid;
+        const uid = el.dataset.planUid;
+        this._dragPlanUid = uid;
+        e.dataTransfer.setData('text/plain', uid);
         e.dataTransfer.effectAllowed = 'move';
-        el.style.opacity = '0.5';
+        setTimeout(() => { el.style.opacity = '0.4'; }, 0);
       });
       el.addEventListener('dragend', () => { el.style.opacity = ''; this._dragPlanUid = null; });
     });
     root.querySelectorAll('.week-cell').forEach(cell => {
       cell.addEventListener('dragover', e => {
-        if (!this._dragPlanUid) return;
-        e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+        // Always preventDefault so browser allows drop; validate in drop handler
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
         cell.classList.add('week-cell--drag-over');
       });
-      cell.addEventListener('dragleave', () => cell.classList.remove('week-cell--drag-over'));
+      cell.addEventListener('dragleave', e => {
+        // Only remove highlight when leaving the cell itself, not a child
+        if (!cell.contains(e.relatedTarget)) cell.classList.remove('week-cell--drag-over');
+      });
       cell.addEventListener('drop', e => {
         e.preventDefault();
         cell.classList.remove('week-cell--drag-over');
-        const uid  = this._dragPlanUid;
+        const uid  = e.dataTransfer.getData('text/plain') || this._dragPlanUid;
         const iso  = cell.dataset.dropIso;
         const slot = cell.dataset.dropSlot;
         if (!uid || !iso || !slot) return;
@@ -1598,8 +1604,8 @@ class AlhMealCard extends HTMLElement {
       }
       .meal-entry:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
       .meal-entry:active { cursor: grabbing; }
-      .meal-entry__img { width: 100%; height: 48px; object-fit: cover; display: block; }
-      .meal-entry__body { padding: 5px 6px; }
+      .meal-entry__img { width: 100%; height: 48px; object-fit: cover; display: block; pointer-events: none; }
+      .meal-entry__body { padding: 5px 6px; pointer-events: none; }
       .meal-entry__title {
         font-size: 12px; font-weight: 600; line-height: 1.3;
         color: var(--primary-text-color,currentColor);
@@ -1663,8 +1669,11 @@ class AlhMealCard extends HTMLElement {
         color: var(--primary-color,#0A84FF);
       }
 
-      .recipe-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-      @media (max-width: 380px) { .recipe-grid { grid-template-columns: 1fr; } }
+      .recipe-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+        gap: 10px;
+      }
 
       .recipe-card {
         background: rgba(128,128,128,0.05); border-radius: 16px;
