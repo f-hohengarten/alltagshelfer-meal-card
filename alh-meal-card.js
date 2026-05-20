@@ -65,7 +65,7 @@ function fmtDate(isoStr) {
 function parseRecipeMeta(desc) {
   const str = String(desc ?? '');
   const mHead = str.match(/^\[ALH ([^\]]*)\]/);
-  const meta  = { cat: 'sonstiges', score: '', srv: 4, note: '', ingredients: [] };
+  const meta  = { cat: 'sonstiges', score: '', srv: 4, note: '', img: '', ingredients: [] };
   if (mHead) {
     mHead[1].split(';').forEach(p => {
       const i = p.indexOf(':');
@@ -90,9 +90,10 @@ function parseRecipeMeta(desc) {
   return meta;
 }
 
-function encodeRecipeMeta({ cat, score, srv, note, ingredients }) {
+function encodeRecipeMeta({ cat, score, srv, note, ingredients, img }) {
   const parts = [`cat:${cat || 'sonstiges'}`, `srv:${srv || 4}`];
   if (score) parts.push(`score:${score}`);
+  if (img) parts.push(`img:${img}`);
   const head = `[ALH ${parts.join(';')}]`;
   const ingStr = (ingredients || [])
     .filter(i => i.name)
@@ -180,12 +181,13 @@ class AlhMealCard extends HTMLElement {
     this._nutriSuggestion = null;
     this._importLoading   = false;
     this._importResult    = null;
+    this._planSearch      = '';
   }
 
   _blankRecipeForm() {
     return {
       open: false, uid: null,
-      title: '', cat: 'pasta', score: '', srv: 4, note: '',
+      title: '', cat: 'pasta', score: '', srv: 4, note: '', img: '',
       ingredients: [],
       _ingName: '', _ingAmount: '', _ingUnit: 'g',
       _importUrl: '',
@@ -493,30 +495,49 @@ class AlhMealCard extends HTMLElement {
   }
 
   _renderRecipeCard(recipe) {
-    const meta = parseRecipeMeta(recipe.description);
-    const score = meta.score;
+    const meta     = parseRecipeMeta(recipe.description);
+    const score    = meta.score;
     const catLabel = CATEGORIES.find(c => c.v === meta.cat)?.l ?? meta.cat;
     return `
       <div class="recipe-card">
-        <div class="recipe-card__top">
-          <div class="recipe-card__badges">
-            <span class="cat-badge cat-badge--${x(meta.cat)}">${x(catLabel)}</span>
-            ${score ? `<span class="nutri-badge" style="background:${nutriColor(score)};color:${nutriTextColor(score)}">${score}</span>` : ''}
+        ${meta.img ? `
+          <div class="recipe-card__img-wrap">
+            <img class="recipe-card__img" src="${x(meta.img)}" alt="" loading="lazy"
+              onerror="this.closest('.recipe-card__img-wrap').style.display='none'" />
+            <div class="recipe-card__img-overlay">
+              <span class="cat-badge cat-badge--${x(meta.cat)}">${x(catLabel)}</span>
+              ${score ? `<span class="nutri-badge" style="background:${nutriColor(score)};color:${nutriTextColor(score)}">${score}</span>` : ''}
+            </div>
+            <button class="recipe-card__edit icon-btn icon-btn--sm" data-action="edit-recipe" data-recipe-uid="${x(recipe.uid)}" aria-label="Bearbeiten">
+              <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+            </button>
           </div>
-          <button class="icon-btn icon-btn--sm" data-action="edit-recipe" data-recipe-uid="${x(recipe.uid)}" aria-label="Bearbeiten">
-            <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-          </button>
-        </div>
-        <div class="recipe-card__title">${x(recipe.summary)}</div>
-        <div class="recipe-card__meta">
-          <span class="recipe-card__srv">
-            <svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
-            ${meta.srv}
-          </span>
-          ${meta.ingredients.length > 0 ? `<span class="recipe-card__ings">${meta.ingredients.length} Zutaten</span>` : ''}
-        </div>
-        <div class="recipe-card__actions">
-          <button class="btn btn--ghost btn--sm" data-action="plan-recipe" data-recipe-uid="${x(recipe.uid)}">Einplanen</button>
+        ` : `
+          <div class="recipe-card__top">
+            <div class="recipe-card__badges">
+              <span class="cat-badge cat-badge--${x(meta.cat)}">${x(catLabel)}</span>
+              ${score ? `<span class="nutri-badge" style="background:${nutriColor(score)};color:${nutriTextColor(score)}">${score}</span>` : ''}
+            </div>
+            <button class="icon-btn icon-btn--sm" data-action="edit-recipe" data-recipe-uid="${x(recipe.uid)}" aria-label="Bearbeiten">
+              <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+            </button>
+          </div>
+        `}
+        <div class="recipe-card__body">
+          <div class="recipe-card__title">${x(recipe.summary)}</div>
+          <div class="recipe-card__meta">
+            <span class="recipe-card__srv">
+              <svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+              ${meta.srv} Pers.
+            </span>
+            ${meta.ingredients.length > 0 ? `<span class="recipe-card__ings">${meta.ingredients.length} Zutaten</span>` : ''}
+          </div>
+          <div class="recipe-card__actions">
+            <button class="btn btn--primary btn--sm" data-action="plan-recipe" data-recipe-uid="${x(recipe.uid)}">
+              <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z"/></svg>
+              Einplanen
+            </button>
+          </div>
         </div>
       </div>
     `;
@@ -762,14 +783,38 @@ class AlhMealCard extends HTMLElement {
         <div class="form__section-label">Rezept</div>
         ${recipes.length === 0 ? `
           <div class="empty">Noch keine Rezepte. Lege zuerst ein Rezept an.</div>
-        ` : `
-          <select class="plan-form__recipe form__select form__select--full">
-            <option value="">— Rezept wählen —</option>
-            ${recipes.map(r => `
-              <option value="${x(r.uid)}"${f.recipeUid === r.uid ? ' selected' : ''}>${x(r.summary)}</option>
-            `).join('')}
-          </select>
-        `}
+        ` : (() => {
+          const selected = recipes.find(r => r.uid === f.recipeUid);
+          const results  = this._planSearch
+            ? recipes.filter(r => r.summary.toLowerCase().includes(this._planSearch.toLowerCase())).slice(0, 6)
+            : [];
+          if (selected) return `
+            <div class="plan-recipe-selected">
+              <span class="plan-recipe-selected__name">${x(selected.summary)}</span>
+              <button class="icon-btn icon-btn--sm" data-action="clear-plan-recipe" aria-label="Rezept ändern">
+                <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+              </button>
+            </div>`;
+          return `
+            <div class="plan-recipe-search-wrap">
+              <input class="plan-recipe-search form__input" type="search"
+                placeholder="Rezept suchen…" value="${x(this._planSearch)}" autocomplete="off" />
+              ${results.length > 0 ? `
+                <div class="plan-recipe-dropdown">
+                  ${results.map(r => {
+                    const m = parseRecipeMeta(r.description);
+                    const catL = CATEGORIES.find(c => c.v === m.cat)?.l ?? m.cat;
+                    return `<div class="plan-recipe-option" data-recipe-uid="${x(r.uid)}">
+                      <span class="plan-recipe-option__title">${x(r.summary)}</span>
+                      <span class="plan-recipe-option__meta">${x(catL)} · ${m.srv} Pers.</span>
+                    </div>`;
+                  }).join('')}
+                </div>
+              ` : (this._planSearch && results.length === 0 ? `
+                <div class="plan-recipe-dropdown"><div class="plan-recipe-option plan-recipe-option--empty">Keine Rezepte gefunden</div></div>
+              ` : '')}
+            </div>`;
+        })()}
 
         <div class="form__section-label">Portionen</div>
         <div class="srv-stepper">
@@ -1004,15 +1049,37 @@ class AlhMealCard extends HTMLElement {
 
     // ── Plan form events ──
 
-    const recipeSelect = root.querySelector('.plan-form__recipe');
-    if (recipeSelect) recipeSelect.addEventListener('change', () => {
-      this._planForm.recipeUid = recipeSelect.value;
-      const recipe = this._recipes.find(r => r.uid === recipeSelect.value);
-      if (recipe) {
-        const meta = parseRecipeMeta(recipe.description);
-        this._planForm.srv = meta.srv || 4;
-      }
+    const planSearchEl = root.querySelector('.plan-recipe-search');
+    if (planSearchEl) {
+      planSearchEl.addEventListener('input', () => {
+        this._planSearch = planSearchEl.value;
+        this._render();
+        // Restore focus after re-render
+        setTimeout(() => {
+          const el = this.shadowRoot.querySelector('.plan-recipe-search');
+          if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+        }, 0);
+      });
+    }
+
+    root.querySelectorAll('.plan-recipe-option').forEach(el => {
+      el.addEventListener('click', () => {
+        const uid = el.dataset.recipeUid;
+        if (!uid) return;
+        this._planForm.recipeUid = uid;
+        const recipe = this._recipes.find(r => r.uid === uid);
+        if (recipe) this._planForm.srv = parseRecipeMeta(recipe.description).srv || 4;
+        this._planSearch = '';
+        this._render();
+      });
+    });
+
+    const clearPlanRecipe = root.querySelector('[data-action="clear-plan-recipe"]');
+    if (clearPlanRecipe) clearPlanRecipe.addEventListener('click', () => {
+      this._planForm.recipeUid = '';
+      this._planSearch = '';
       this._render();
+      setTimeout(() => { const el = this.shadowRoot.querySelector('.plan-recipe-search'); if (el) el.focus(); }, 0);
     });
 
     const planSrvMinus = root.querySelector('[data-action="plan-srv-minus"]');
@@ -1033,6 +1100,7 @@ class AlhMealCard extends HTMLElement {
     if (cancelPlan) cancelPlan.addEventListener('click', () => {
       this._activePanel = null;
       this._planForm    = this._blankPlanForm();
+      this._planSearch  = '';
       this._render();
     });
   }
@@ -1044,8 +1112,8 @@ class AlhMealCard extends HTMLElement {
       if (inp && !inp.value) inp.focus();
     }
     if (this._activePanel === 'plan-form') {
-      const sel = this.shadowRoot.querySelector('.plan-form__recipe');
-      if (sel && !this._planForm.recipeUid) sel.focus();
+      const searchEl = this.shadowRoot.querySelector('.plan-recipe-search');
+      if (searchEl && !this._planForm.recipeUid) searchEl.focus();
     }
   }
 
@@ -1069,6 +1137,7 @@ class AlhMealCard extends HTMLElement {
       score: meta.score || '',
       srv:   meta.srv || 4,
       note:  meta.note || '',
+      img:   meta.img || '',
       ingredients: [...meta.ingredients],
       _ingName: '', _ingAmount: '', _ingUnit: 'g',
     };
@@ -1083,6 +1152,7 @@ class AlhMealCard extends HTMLElement {
       if (r) srv = parseRecipeMeta(r.description).srv || 4;
     }
     this._planForm    = { open: true, dayIso: dayIso || isoToday(), recipeUid, srv };
+    this._planSearch  = '';
     this._activePanel = 'plan-form';
     this._render();
   }
@@ -1119,8 +1189,8 @@ class AlhMealCard extends HTMLElement {
     }
     if (noteEl) this._recipeForm.note = noteEl.value;
 
-    const { uid, cat, score, srv, note, ingredients } = this._recipeForm;
-    const desc = encodeRecipeMeta({ cat, score, srv, note, ingredients });
+    const { uid, cat, score, srv, note, ingredients, img } = this._recipeForm;
+    const desc = encodeRecipeMeta({ cat, score, srv, note, ingredients, img });
 
     if (uid) {
       this._svc(this._config.recipe_entity, 'update_item', { item: uid, rename: title, description: desc });
@@ -1148,9 +1218,8 @@ class AlhMealCard extends HTMLElement {
 
   _submitPlan() {
     const dayEl    = this.shadowRoot.querySelector('.plan-form__date');
-    const selEl    = this.shadowRoot.querySelector('.plan-form__recipe');
     const dayIso   = (dayEl?.value ?? this._planForm.dayIso).trim();
-    const recipeUid = (selEl?.value ?? this._planForm.recipeUid).trim();
+    const recipeUid = this._planForm.recipeUid.trim();
 
     if (!dayIso || !recipeUid) return;
     const recipe = this._recipes.find(r => r.uid === recipeUid);
@@ -1228,6 +1297,7 @@ class AlhMealCard extends HTMLElement {
         })).filter(i => i.name);
       }
       if (data.servings) this._recipeForm.srv = parseInt(data.servings) || 4;
+      if (data.img) this._recipeForm.img = data.img;
     } catch (e) {
       this._importResult = { error: 'Antwort konnte nicht gelesen werden.' };
     }
@@ -1367,10 +1437,10 @@ class AlhMealCard extends HTMLElement {
         display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px;
       }
       .week-day {
-        min-height: 80px; border-radius: 12px;
+        min-height: 100px; border-radius: 12px;
         background: rgba(128,128,128,0.05);
         border: 1px solid rgba(128,128,128,0.1);
-        padding: 5px 3px 4px;
+        padding: 6px 4px 5px;
         display: flex; flex-direction: column; gap: 3px; overflow: hidden;
       }
       .week-day--today {
@@ -1467,30 +1537,82 @@ class AlhMealCard extends HTMLElement {
         color: var(--primary-color,#0A84FF);
       }
 
-      .recipe-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-      @media (max-width: 340px) { .recipe-grid { grid-template-columns: 1fr; } }
+      .recipe-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      @media (max-width: 380px) { .recipe-grid { grid-template-columns: 1fr; } }
 
       .recipe-card {
-        background: rgba(128,128,128,0.05); border-radius: 14px;
-        border: 1px solid rgba(128,128,128,0.1); padding: 10px;
-        display: flex; flex-direction: column; gap: 6px;
+        background: rgba(128,128,128,0.05); border-radius: 16px;
+        border: 1px solid rgba(128,128,128,0.1);
+        display: flex; flex-direction: column; overflow: hidden;
+        transition: transform 0.15s, box-shadow 0.15s;
       }
-      .recipe-card__top { display: flex; align-items: flex-start; justify-content: space-between; gap: 4px; }
+      .recipe-card:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(0,0,0,0.2); }
+
+      .recipe-card__img-wrap {
+        position: relative; aspect-ratio: 16/9; overflow: hidden; flex-shrink: 0;
+      }
+      .recipe-card__img {
+        width: 100%; height: 100%; object-fit: cover; display: block;
+      }
+      .recipe-card__img-overlay {
+        position: absolute; top: 7px; left: 7px; display: flex; gap: 4px; flex-wrap: wrap;
+      }
+      .recipe-card__edit {
+        position: absolute; top: 7px; right: 7px;
+        background: rgba(0,0,0,0.45); backdrop-filter: blur(4px);
+      }
+      .recipe-card__edit svg { fill: #fff; opacity: 0.9; }
+
+      .recipe-card__top { display: flex; align-items: flex-start; justify-content: space-between; gap: 4px; padding: 10px 10px 0; }
       .recipe-card__badges { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+
+      .recipe-card__body { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
       .recipe-card__title {
-        font-size: 13px; font-weight: 600; line-height: 1.3;
+        font-size: 13px; font-weight: 600; line-height: 1.35;
         color: var(--primary-text-color, currentColor); word-break: break-word;
       }
-      .recipe-card__meta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+      .recipe-card__meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
       .recipe-card__srv {
         display: flex; align-items: center; gap: 3px;
-        font-size: 11px; color: var(--secondary-text-color,currentColor); opacity: 0.6;
+        font-size: 11px; color: var(--secondary-text-color,currentColor); opacity: 0.65;
       }
       .recipe-card__srv svg { width: 12px; height: 12px; fill: currentColor; }
       .recipe-card__ings {
         font-size: 11px; color: var(--secondary-text-color,currentColor); opacity: 0.5;
       }
-      .recipe-card__actions { margin-top: auto; }
+      .recipe-card__actions { margin-top: auto; padding-top: 4px; }
+
+      /* ── Plan search dropdown ── */
+      .plan-recipe-search-wrap { position: relative; }
+      .plan-recipe-dropdown {
+        position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 10;
+        background: var(--ha-card-background, #1c1c1e);
+        border: 1px solid rgba(128,128,128,0.2); border-radius: 12px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.35); overflow: hidden;
+      }
+      .plan-recipe-option {
+        padding: 10px 14px; cursor: pointer;
+        display: flex; flex-direction: column; gap: 2px;
+        border-bottom: 1px solid rgba(128,128,128,0.08); transition: background 0.1s;
+      }
+      .plan-recipe-option:last-child { border-bottom: none; }
+      .plan-recipe-option:hover { background: rgba(var(--rgb-primary-color,10,132,255),0.1); }
+      .plan-recipe-option__title { font-size: 13px; font-weight: 500; color: var(--primary-text-color,currentColor); }
+      .plan-recipe-option__meta { font-size: 11px; color: var(--secondary-text-color,currentColor); opacity: 0.55; }
+      .plan-recipe-option--empty { cursor: default; color: var(--secondary-text-color,currentColor); opacity: 0.5; font-size: 13px; }
+      .plan-recipe-option--empty:hover { background: transparent; }
+
+      .plan-recipe-selected {
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        padding: 10px 14px; border-radius: 10px;
+        background: rgba(var(--rgb-primary-color,10,132,255),0.08);
+        border: 1px solid rgba(var(--rgb-primary-color,10,132,255),0.25);
+      }
+      .plan-recipe-selected__name {
+        font-size: 14px; font-weight: 500;
+        color: var(--primary-text-color,currentColor); flex: 1; min-width: 0;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
 
       /* ── Einkauf View ── */
       .einkauf { padding: 0 12px 14px; }

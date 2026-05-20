@@ -90,6 +90,12 @@ def extract_json_ld(html):
 
 def parse_ingredient(raw):
     raw = str(raw).strip()
+    unit_map = {
+        'stk': 'Stk', 'stück': 'Stk', 'zehe': 'Zehe', 'bund': 'Bund',
+        'pkg': 'Pkg', 'prise': 'Prise', 'el': 'EL', 'tl': 'TL',
+        'tbsp': 'EL', 'tsp': 'TL', 'cup': 'Stk', 'cups': 'Stk',
+    }
+    # Pattern 1: NUMBER UNIT NAME  e.g. "400 g Hackfleisch", "2 EL Olivenöl"
     m = re.match(
         r'^([\d,./½¼¾⅓⅔]+)\s*'
         r'(g|kg|ml|l|L|EL|TL|Stk|Stück|Zehe|Bund|Pkg|Prise|cl|dl|oz|lb|cup|cups|tbsp|tsp)\.?\s+'
@@ -97,13 +103,12 @@ def parse_ingredient(raw):
         raw, re.IGNORECASE
     )
     if m:
-        unit_map = {
-            'stk': 'Stk', 'stück': 'Stk', 'zehe': 'Zehe', 'bund': 'Bund',
-            'pkg': 'Pkg', 'prise': 'Prise', 'el': 'EL', 'tl': 'TL',
-            'tbsp': 'EL', 'tsp': 'TL', 'cup': 'Stk', 'cups': 'Stk',
-        }
         unit = unit_map.get(m.group(2).lower(), m.group(2))
         return {"name": m.group(3).strip(), "amount": m.group(1), "unit": unit}
+    # Pattern 2: NUMBER NAME  e.g. "2 Paprikaschote(n) (rot)", "6 Knoblauchzehe(n)"
+    m2 = re.match(r'^([\d,./½¼¾⅓⅔]+)\s+(.+)$', raw)
+    if m2:
+        return {"name": m2.group(2).strip(), "amount": m2.group(1), "unit": "Stk"}
     return {"name": raw, "amount": "", "unit": "Stk"}
 
 
@@ -134,7 +139,7 @@ def write_to_ha(result_json):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-result = {"title": "", "ingredients": [], "servings": 4, "error": ""}
+result = {"title": "", "ingredients": [], "servings": 4, "img": "", "error": ""}
 
 if not url:
     result["error"] = "Keine URL angegeben."
@@ -157,6 +162,11 @@ else:
 
             raw_ings = recipe.get("recipeIngredient", [])
             result["ingredients"] = [parse_ingredient(clean_text(i)) for i in raw_ings if i]
+
+            img_raw = recipe.get("image", "")
+            if isinstance(img_raw, list): img_raw = img_raw[0] if img_raw else ""
+            if isinstance(img_raw, dict): img_raw = img_raw.get("url", "")
+            result["img"] = str(img_raw).split("?")[0]  # strip query params
         else:
             result["error"] = "Kein Rezept auf dieser Seite gefunden."
 
