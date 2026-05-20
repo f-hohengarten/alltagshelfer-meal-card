@@ -27,6 +27,12 @@ const NUTRI_RULES = {
       'tiefkühlpizza', 'fastfood', 'frittiert', 'ketchup', 'softdrink'],
 };
 
+const SLOTS = [
+  { v: 'fruehstueck', l: 'Frühstück', icon: '🌅' },
+  { v: 'mittag',      l: 'Mittagessen', icon: '☀️' },
+  { v: 'abendessen',  l: 'Abendessen', icon: '🌙' },
+];
+
 const DAY_NAMES_SHORT = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
 const DAY_NAMES_LONG  = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
 const MONTH_NAMES     = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
@@ -108,19 +114,22 @@ function encodeRecipeMeta({ cat, score, srv, note, ingredients, img }) {
 function parsePlanMeta(desc) {
   const str = String(desc ?? '');
   const m = str.match(/^\[ALH ([^\]]*)\]/);
-  const meta = { recipe_id: '', srv: 4 };
+  const meta = { recipe_id: '', srv: 4, slot: 'mittag' };
   if (m) {
     m[1].split(';').forEach(p => {
       const i = p.indexOf(':');
       if (i > 0) meta[p.slice(0, i).trim()] = p.slice(i + 1).trim();
     });
     meta.srv = parseInt(meta.srv) || 4;
+    if (!SLOTS.find(s => s.v === meta.slot)) meta.slot = 'mittag';
   }
   return meta;
 }
 
-function encodePlanMeta({ recipe_id, srv }) {
-  return `[ALH recipe_id:${recipe_id};srv:${srv || 4}]`;
+function encodePlanMeta({ recipe_id, srv, slot }) {
+  const parts = [`recipe_id:${recipe_id}`, `srv:${srv || 4}`];
+  if (slot && slot !== 'mittag') parts.push(`slot:${slot}`);
+  return `[ALH ${parts.join(';')}]`;
 }
 
 function suggestNutriScore(ingredients) {
@@ -182,6 +191,7 @@ class AlhMealCard extends HTMLElement {
     this._importLoading   = false;
     this._importResult    = null;
     this._planSearch      = '';
+    this._dragPlanUid     = null;
   }
 
   _blankRecipeForm() {
@@ -195,7 +205,7 @@ class AlhMealCard extends HTMLElement {
   }
 
   _blankPlanForm() {
-    return { open: false, dayIso: '', recipeUid: '', srv: 4 };
+    return { open: false, dayIso: '', recipeUid: '', srv: 4, slot: 'mittag' };
   }
 
   static getStubConfig() {
@@ -379,14 +389,46 @@ class AlhMealCard extends HTMLElement {
     const today    = isoToday();
     const monthStr = MONTH_NAMES[monday.getMonth()];
     const yearStr  = monday.getFullYear();
-
-    const days = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + i);
-      return isoDate(d);
+    const days     = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(monday); d.setDate(monday.getDate() + i); return isoDate(d);
     });
+    const DAY_COLS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+    const weekPlan = this._plan.filter(p => days.includes(p.due) && p.status !== 'completed');
 
-    const weekPlan = this._plan.filter(p => days.includes(p.due));
+    const mealCell = (iso, slot) => {
+      const meals = weekPlan.filter(p => {
+        const m = parsePlanMeta(p.description);
+        return p.due === iso && m.slot === slot;
+      });
+      const isToday = iso === today;
+      return `
+        <div class="week-cell${isToday ? ' week-cell--today' : ''}"
+          data-drop-iso="${x(iso)}" data-drop-slot="${x(slot)}">
+          ${meals.map(p => {
+            const meta   = parsePlanMeta(p.description);
+            const recipe = this._recipes.find(r => r.uid === meta.recipe_id);
+            const rmeta  = recipe ? parseRecipeMeta(recipe.description) : {};
+            return `
+              <div class="meal-entry" draggable="true" data-plan-uid="${x(p.uid)}"
+                data-iso="${x(iso)}" data-slot="${x(slot)}">
+                ${rmeta.img ? `<img class="meal-entry__img" src="${x(rmeta.img)}" alt=""
+                  loading="lazy" onerror="this.style.display='none'" />` : ''}
+                <div class="meal-entry__body">
+                  <div class="meal-entry__title">${x(p.summary)}</div>
+                  <div class="meal-entry__meta">
+                    ${rmeta.score ? `<span class="nutri-badge" style="background:${nutriColor(rmeta.score)};color:${nutriTextColor(rmeta.score)}">${rmeta.score}</span>` : ''}
+                    <span class="meal-entry__srv">${meta.srv} Pers.</span>
+                  </div>
+                </div>
+                <button class="meal-entry__del" data-action="del-plan" data-plan-uid="${x(p.uid)}" aria-label="Entfernen">
+                  <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                </button>
+              </div>`;
+          }).join('')}
+          <button class="week-cell__add" data-action="open-plan-form"
+            data-iso="${x(iso)}" data-slot="${x(slot)}" aria-label="Hinzufügen">+</button>
+        </div>`;
+    };
 
     return `
       <div class="woche">
@@ -395,61 +437,74 @@ class AlhMealCard extends HTMLElement {
             <svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
           </button>
           <span class="woche__month">${monthStr} ${yearStr}</span>
-          <div style="display:flex;gap:6px;align-items:center">
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
             ${this._weekOffset !== 0 ? `<button class="btn btn--ghost btn--sm" data-action="week-today">Heute</button>` : ''}
+            <button class="btn btn--ghost btn--sm" data-action="copy-week"
+              title="Alle Mahlzeiten dieser Woche in die nächste Woche kopieren">
+              <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+              Woche kopieren
+            </button>
             <button class="icon-btn" data-action="week-next" aria-label="Nächste Woche">
               <svg viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
             </button>
           </div>
         </div>
 
-        <div class="week-grid">
+        <div class="week-table">
+          <!-- Header row: corner + 7 day labels -->
+          <div class="week-table__corner"></div>
           ${days.map((iso, idx) => {
-            const dayPlan = weekPlan.filter(p => p.due === iso);
             const isToday   = iso === today;
             const isWeekend = idx >= 5;
-            const dayNum  = new Date(iso + 'T12:00:00').getDate();
-            const dayName = DAY_NAMES_SHORT[(idx + 1) % 7];
+            const dayNum    = new Date(iso + 'T12:00:00').getDate();
             return `
-              <div class="week-day${isToday ? ' week-day--today' : ''}${isWeekend ? ' week-day--weekend' : ''}">
-                <div class="week-day__header">
-                  <span class="week-day__name">${dayName}</span>
-                  <span class="week-day__num${isToday ? ' week-day__num--today' : ''}">${dayNum}</span>
-                </div>
-                <div class="week-day__meals">
-                  ${dayPlan.map(p => {
-                    const meta   = parsePlanMeta(p.description);
-                    const recipe = this._recipes.find(r => r.uid === meta.recipe_id);
-                    const score  = recipe ? parseRecipeMeta(recipe.description).score : '';
-                    return `
-                      <div class="meal-chip" data-plan-uid="${x(p.uid)}">
-                        <span class="meal-chip__title">${x(p.summary)}</span>
-                        ${score ? `<span class="nutri-badge" style="background:${nutriColor(score)};color:${nutriTextColor(score)}">${score}</span>` : ''}
-                        <button class="meal-chip__del" data-action="del-plan" data-plan-uid="${x(p.uid)}" aria-label="Entfernen">
-                          <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-                        </button>
-                      </div>
-                    `;
-                  }).join('')}
-                </div>
-                <button class="week-day__add" data-action="open-plan-form" data-iso="${iso}" aria-label="Mahlzeit hinzufügen">
-                  <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-                </button>
-              </div>
-            `;
+              <div class="week-table__day-header${isToday ? ' week-table__day-header--today' : ''}${isWeekend ? ' week-table__day-header--weekend' : ''}">
+                <span class="wth-name">${DAY_COLS[idx]}</span>
+                <span class="wth-num${isToday ? ' wth-num--today' : ''}">${dayNum}</span>
+              </div>`;
           }).join('')}
+
+          <!-- 3 slot rows -->
+          ${SLOTS.map(slot => `
+            <div class="week-table__slot-label">
+              <span class="slot-icon">${slot.icon}</span>
+              <span class="slot-text">${slot.l}</span>
+            </div>
+            ${days.map(iso => mealCell(iso, slot.v)).join('')}
+          `).join('')}
         </div>
 
         ${weekPlan.length > 0 ? `
           <div class="woche__shop-bar">
             <span class="woche__shop-label">${weekPlan.length} Mahlzeit${weekPlan.length !== 1 ? 'en' : ''} diese Woche</span>
-            <button class="btn btn--primary btn--sm" data-action="goto-einkauf-week">Einkaufsliste erstellen</button>
+            <button class="btn btn--primary btn--sm" data-action="goto-einkauf-week">
+              <svg viewBox="0 0 24 24"><path d="M17.21 9l-4.38-6.56c-.19-.28-.51-.42-.83-.42-.32 0-.64.14-.83.43L6.79 9H2c-.55 0-1 .45-1 1 0 .09.01.18.04.27l2.54 9.27c.23.84 1 1.46 1.92 1.46h13c.92 0 1.69-.62 1.93-1.46l2.54-9.27L23 10c0-.55-.45-1-1-1h-4.79zM9 9l3-4.4L15 9H9zm3 8c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg>
+              Einkaufsliste erstellen
+            </button>
           </div>
         ` : `
-          <div class="empty">Noch keine Mahlzeiten geplant.<br>Tippe auf + um eine hinzuzufügen.</div>
+          <div class="empty">Noch keine Mahlzeiten geplant — tippe auf + in einer Zelle.</div>
         `}
       </div>
     `;
+  }
+
+  _copyWeek() {
+    const monday = getMondayOfWeek(new Date(), this._weekOffset);
+    const days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(monday); d.setDate(monday.getDate() + i); return isoDate(d);
+    });
+    const weekPlan = this._plan.filter(p => days.includes(p.due) && p.status !== 'completed');
+    if (!weekPlan.length) return;
+    for (const p of weekPlan) {
+      const d = new Date(p.due + 'T12:00:00');
+      d.setDate(d.getDate() + 7);
+      this._svc(this._config.plan_entity, 'add_item', {
+        item:        p.summary,
+        due_date:    isoDate(d),
+        description: p.description,
+      });
+    }
   }
 
   // ─── Rezepte View ────────────────────────────────────────────────────────────
@@ -816,6 +871,14 @@ class AlhMealCard extends HTMLElement {
             </div>`;
         })()}
 
+        <div class="form__section-label">Mahlzeit</div>
+        <div class="picker--grid">
+          ${SLOTS.map(s => `
+            <button class="pill${f.slot === s.v ? ' pill--on' : ''}" data-plan-slot="${x(s.v)}">
+              ${s.icon} ${s.l}
+            </button>`).join('')}
+        </div>
+
         <div class="form__section-label">Portionen</div>
         <div class="srv-stepper">
           <button class="srv-btn" data-action="plan-srv-minus">−</button>
@@ -877,11 +940,58 @@ class AlhMealCard extends HTMLElement {
       this._render();
     });
 
-    // Open plan form from week day "+"
+    // Copy week
+    const copyWeekBtn = root.querySelector('[data-action="copy-week"]');
+    if (copyWeekBtn) copyWeekBtn.addEventListener('click', () => this._copyWeek());
+
+    // Drag and drop for meal entries
+    root.querySelectorAll('.meal-entry[draggable]').forEach(el => {
+      el.addEventListener('dragstart', e => {
+        this._dragPlanUid = el.dataset.planUid;
+        e.dataTransfer.effectAllowed = 'move';
+        el.style.opacity = '0.5';
+      });
+      el.addEventListener('dragend', () => { el.style.opacity = ''; this._dragPlanUid = null; });
+    });
+    root.querySelectorAll('.week-cell').forEach(cell => {
+      cell.addEventListener('dragover', e => {
+        if (!this._dragPlanUid) return;
+        e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+        cell.classList.add('week-cell--drag-over');
+      });
+      cell.addEventListener('dragleave', () => cell.classList.remove('week-cell--drag-over'));
+      cell.addEventListener('drop', e => {
+        e.preventDefault();
+        cell.classList.remove('week-cell--drag-over');
+        const uid  = this._dragPlanUid;
+        const iso  = cell.dataset.dropIso;
+        const slot = cell.dataset.dropSlot;
+        if (!uid || !iso || !slot) return;
+        const planItem = this._plan.find(p => p.uid === uid);
+        if (!planItem) return;
+        const meta    = parsePlanMeta(planItem.description);
+        const newDesc = encodePlanMeta({ recipe_id: meta.recipe_id, srv: meta.srv, slot });
+        this._svc(this._config.plan_entity, 'update_item', {
+          item: uid, due_date: iso, description: newDesc,
+        });
+        this._dragPlanUid = null;
+      });
+    });
+
+    // Slot picker in plan form
+    root.querySelectorAll('[data-plan-slot]').forEach(el => {
+      el.addEventListener('click', () => {
+        this._planForm.slot = el.dataset.planSlot;
+        this._render();
+      });
+    });
+
+    // Open plan form from week cell "+"
     root.querySelectorAll('[data-action="open-plan-form"]').forEach(el => {
       el.addEventListener('click', () => {
-        const iso = el.dataset.iso;
-        this._openPlanForm(iso);
+        const iso  = el.dataset.iso;
+        const slot = el.dataset.slot || 'mittag';
+        this._openPlanForm(iso, '', slot);
       });
     });
 
@@ -1145,13 +1255,13 @@ class AlhMealCard extends HTMLElement {
     this._render();
   }
 
-  _openPlanForm(dayIso, recipeUid = '') {
+  _openPlanForm(dayIso, recipeUid = '', slot = 'mittag') {
     let srv = 4;
     if (recipeUid) {
       const r = this._recipes.find(r => r.uid === recipeUid);
       if (r) srv = parseRecipeMeta(r.description).srv || 4;
     }
-    this._planForm    = { open: true, dayIso: dayIso || isoToday(), recipeUid, srv };
+    this._planForm    = { open: true, dayIso: dayIso || isoToday(), recipeUid, srv, slot };
     this._planSearch  = '';
     this._activePanel = 'plan-form';
     this._render();
@@ -1228,7 +1338,7 @@ class AlhMealCard extends HTMLElement {
     this._svc(this._config.plan_entity, 'add_item', {
       item:        recipe.summary,
       due_date:    dayIso,
-      description: encodePlanMeta({ recipe_id: recipeUid, srv: this._planForm.srv }),
+      description: encodePlanMeta({ recipe_id: recipeUid, srv: this._planForm.srv, slot: this._planForm.slot }),
     });
 
     this._activePanel = null;
@@ -1380,12 +1490,12 @@ class AlhMealCard extends HTMLElement {
       .btn svg { width: 15px; height: 15px; fill: currentColor; }
 
       /* ── View Tabs ── */
-      .view-tabs { display: flex; gap: 4px; padding: 0 14px 10px; }
+      .view-tabs { display: flex; gap: 6px; padding: 0 14px 12px; }
       .view-tab {
-        padding: 4px 14px; border-radius: 20px;
+        padding: 6px 16px; border-radius: 20px;
         border: 1px solid rgba(128,128,128,0.18);
         background: rgba(128,128,128,0.07);
-        font-size: 12px; font-weight: 500; font-family: inherit;
+        font-size: 14px; font-weight: 500; font-family: inherit;
         color: var(--secondary-text-color, currentColor);
         cursor: pointer; transition: all 0.15s;
       }
@@ -1423,90 +1533,106 @@ class AlhMealCard extends HTMLElement {
       .cat-badge--sonstiges   { background: rgba(128,128,128,0.12);  color: var(--secondary-text-color,currentColor); }
 
       /* ── Woche View ── */
-      .woche { padding: 0 10px 10px; }
+      .woche { padding: 0 12px 12px; }
       .woche__nav {
         display: flex; align-items: center; justify-content: space-between;
-        padding: 2px 2px 10px;
+        padding: 2px 0 12px; flex-wrap: wrap; gap: 8px;
       }
-      .woche__month {
-        font-size: 14px; font-weight: 600;
-        color: var(--primary-text-color, currentColor);
+      .woche__month { font-size: 16px; font-weight: 700; color: var(--primary-text-color,currentColor); }
+
+      /* Week table: 8-column grid (slot label + 7 days) */
+      .week-table {
+        display: grid;
+        grid-template-columns: 72px repeat(7, minmax(0, 1fr));
+        gap: 3px;
+        overflow-x: auto;
       }
 
-      .week-grid {
-        display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px;
-      }
-      .week-day {
-        min-height: 100px; border-radius: 12px;
+      .week-table__corner { /* empty top-left cell */ }
+
+      .week-table__day-header {
+        text-align: center; padding: 8px 4px 6px;
+        border-radius: 10px 10px 0 0;
         background: rgba(128,128,128,0.05);
-        border: 1px solid rgba(128,128,128,0.1);
-        padding: 6px 4px 5px;
-        display: flex; flex-direction: column; gap: 3px; overflow: hidden;
+        border: 1px solid transparent;
+        display: flex; flex-direction: column; align-items: center; gap: 4px;
       }
-      .week-day--today {
-        border-color: var(--primary-color, #0A84FF);
-        background: rgba(var(--rgb-primary-color,10,132,255), 0.07);
+      .week-table__day-header--today {
+        background: rgba(var(--rgb-primary-color,10,132,255),0.08);
+        border-color: var(--primary-color,#0A84FF);
       }
-      .week-day--weekend { background: rgba(128,128,128,0.07); }
-
-      .week-day__header {
-        display: flex; flex-direction: column; align-items: center; gap: 1px;
-        margin-bottom: 2px;
-      }
-      .week-day__name {
-        font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em;
-        color: var(--secondary-text-color, currentColor); opacity: 0.55;
-      }
-      .week-day__num {
-        font-size: 13px; font-weight: 500; line-height: 1;
-        color: var(--primary-text-color, currentColor);
-      }
-      .week-day__num--today {
+      .week-table__day-header--weekend { background: rgba(128,128,128,0.07); }
+      .wth-name { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--secondary-text-color,currentColor); opacity: 0.6; }
+      .wth-num { font-size: 16px; font-weight: 600; color: var(--primary-text-color,currentColor); line-height: 1; }
+      .wth-num--today {
         background: var(--primary-color,#0A84FF); color: #fff;
-        border-radius: 50%; width: 20px; height: 20px;
+        border-radius: 50%; width: 28px; height: 28px;
         display: flex; align-items: center; justify-content: center;
-        font-size: 11px; font-weight: 700;
+        font-size: 14px; font-weight: 700;
       }
-      .week-day__meals { display: flex; flex-direction: column; gap: 2px; flex: 1; overflow: hidden; }
 
-      .meal-chip {
-        display: flex; align-items: center; gap: 2px;
+      .week-table__slot-label {
+        display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+        padding: 10px 4px 4px; gap: 3px;
+      }
+      .slot-icon { font-size: 16px; }
+      .slot-text { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--secondary-text-color,currentColor); opacity: 0.55; text-align: center; }
+
+      .week-cell {
+        min-height: 90px; padding: 4px; border-radius: 8px;
+        background: rgba(128,128,128,0.04);
+        border: 2px solid transparent;
+        display: flex; flex-direction: column; gap: 4px;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      .week-cell--today { background: rgba(var(--rgb-primary-color,10,132,255),0.04); }
+      .week-cell--drag-over {
+        border-color: var(--primary-color,#0A84FF);
+        background: rgba(var(--rgb-primary-color,10,132,255),0.12);
+      }
+
+      .meal-entry {
         background: rgba(var(--rgb-primary-color,10,132,255),0.1);
-        border-radius: 6px; padding: 2px 3px;
-        min-width: 0;
+        border-radius: 8px; overflow: hidden; cursor: grab; position: relative;
+        transition: box-shadow 0.15s;
       }
-      .meal-chip__title {
-        font-size: 9px; font-weight: 500; flex: 1; min-width: 0;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        color: var(--primary-text-color, currentColor);
+      .meal-entry:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
+      .meal-entry:active { cursor: grabbing; }
+      .meal-entry__img { width: 100%; height: 48px; object-fit: cover; display: block; }
+      .meal-entry__body { padding: 5px 6px; }
+      .meal-entry__title {
+        font-size: 12px; font-weight: 600; line-height: 1.3;
+        color: var(--primary-text-color,currentColor);
+        overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
       }
-      .meal-chip__del {
-        width: 14px; height: 14px; border-radius: 3px; border: none;
-        background: transparent; cursor: pointer; padding: 0; flex-shrink: 0;
-        display: flex; align-items: center; justify-content: center; opacity: 0.4;
-        transition: opacity 0.15s;
-      }
-      .meal-chip__del svg { width: 10px; height: 10px; fill: var(--error-color,#f44336); }
-      .meal-chip__del:hover { opacity: 1; }
-
-      .week-day__add {
-        width: 100%; padding: 3px 0; border-radius: 6px; border: none;
-        background: transparent; cursor: pointer;
+      .meal-entry__meta { display: flex; gap: 4px; align-items: center; margin-top: 3px; flex-wrap: wrap; }
+      .meal-entry__srv { font-size: 11px; color: var(--secondary-text-color,currentColor); opacity: 0.6; }
+      .meal-entry__del {
+        position: absolute; top: 3px; right: 3px;
+        width: 18px; height: 18px; border-radius: 50%;
+        background: rgba(0,0,0,0.5); border: none; cursor: pointer; padding: 0;
         display: flex; align-items: center; justify-content: center;
-        opacity: 0.25; transition: opacity 0.15s, background 0.15s;
+        opacity: 0; transition: opacity 0.15s;
       }
-      .week-day__add svg { width: 14px; height: 14px; fill: var(--primary-color,#0A84FF); }
-      .week-day__add:hover { opacity: 1; background: rgba(var(--rgb-primary-color,10,132,255),0.08); }
+      .meal-entry__del svg { width: 11px; height: 11px; fill: #fff; }
+      .meal-entry:hover .meal-entry__del { opacity: 1; }
+
+      .week-cell__add {
+        width: 100%; padding: 6px 0; border-radius: 6px; border: none;
+        background: transparent; cursor: pointer; font-size: 18px; line-height: 1;
+        color: var(--primary-color,#0A84FF);
+        opacity: 0.2; transition: opacity 0.15s, background 0.15s;
+        margin-top: auto;
+      }
+      .week-cell__add:hover { opacity: 0.8; background: rgba(var(--rgb-primary-color,10,132,255),0.08); }
 
       .woche__shop-bar {
-        display: flex; align-items: center; justify-content: space-between;
-        margin-top: 10px; padding: 8px 10px;
-        background: rgba(128,128,128,0.05); border-radius: 10px;
+        display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+        margin-top: 12px; padding: 10px 14px;
+        background: rgba(128,128,128,0.05); border-radius: 12px;
         border: 1px solid rgba(128,128,128,0.1);
       }
-      .woche__shop-label {
-        font-size: 12px; color: var(--secondary-text-color,currentColor); opacity: 0.7;
-      }
+      .woche__shop-label { font-size: 14px; color: var(--secondary-text-color,currentColor); opacity: 0.75; }
 
       /* ── Rezepte View ── */
       .rezepte { padding: 0 12px 12px; }
