@@ -608,7 +608,8 @@ class AlhMealCard extends HTMLElement {
       d.setDate(monday.getDate() + i);
       return isoDate(d);
     });
-    const weekPlan = this._plan.filter(p => days.includes(p.due) && p.status !== 'completed');
+    // Only today + future — past meals are irrelevant for shopping
+    const weekPlan = this._plan.filter(p => days.includes(p.due) && p.due >= today && p.status !== 'completed');
     const futurePlan = this._plan.filter(p => p.due && p.due >= today && !days.includes(p.due) && p.status !== 'completed').slice(0, 14);
     const allPlan = [...weekPlan, ...futurePlan];
 
