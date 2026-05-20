@@ -218,7 +218,8 @@ class AlhMealCard extends HTMLElement {
       const resultEntity = hass.states['sensor.alh_recipe_import_result'];
       const prev = this._hass.states['sensor.alh_recipe_import_result'];
       if (resultEntity && (!prev || resultEntity.state !== prev.state)) {
-        this._handleImportResult(resultEntity.state);
+        const jsonStr = resultEntity.attributes?.result ?? resultEntity.state;
+        this._handleImportResult(jsonStr);
       }
     }
     const first = !this._hass;

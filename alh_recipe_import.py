@@ -115,7 +115,12 @@ def clean_text(s):
 
 
 def write_to_ha(result_json):
-    payload = json.dumps({"state": result_json}).encode("utf-8")
+    # HA state field is limited to 255 chars; put full JSON in attributes
+    import time
+    payload = json.dumps({
+        "state": str(int(time.time())),
+        "attributes": {"result": result_json},
+    }).encode("utf-8")
     req = urllib.request.Request(
         "http://localhost:8123/api/states/sensor.alh_recipe_import_result",
         data=payload,
@@ -160,11 +165,7 @@ else:
     except Exception as e:
         result["error"] = f"Fehler: {e}"
 
-# Kürzen falls JSON zu lang
 result_json = json.dumps(result, ensure_ascii=False)
-while len(result_json) > 990 and result["ingredients"]:
-    result["ingredients"].pop()
-    result_json = json.dumps(result, ensure_ascii=False)
 
 log(f"Ergebnis: {result_json[:120]}")
 try:
