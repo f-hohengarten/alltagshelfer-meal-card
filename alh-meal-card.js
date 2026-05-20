@@ -1209,7 +1209,7 @@ class AlhMealCard extends HTMLElement {
     this._render();
 
     try {
-      await this._hass.callService('python_script', 'alh_recipe_import', { url });
+      await this._hass.callService('shell_command', 'alh_recipe_import', { url });
       // Result will arrive via input_text.alh_recipe_import_result state change → handled in set hass()
       // Set a timeout fallback
       setTimeout(() => {
