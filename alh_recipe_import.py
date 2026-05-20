@@ -30,7 +30,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(script_dir, ".alh_token")) as f:
     TOKEN = f.read().strip()
 
-url = read_ha_state("input_text.alh_recipe_import_url", TOKEN).strip()
+url = read_ha_state("sensor.alh_recipe_import_url", TOKEN).strip()
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -95,7 +95,7 @@ def clean_text(s):
 def write_to_ha(result_json):
     payload = json.dumps({"state": result_json}).encode("utf-8")
     req = urllib.request.Request(
-        "http://localhost:8123/api/states/input_text.alh_recipe_import_result",
+        "http://localhost:8123/api/states/sensor.alh_recipe_import_result",
         data=payload,
         headers={
             "Authorization": f"Bearer {TOKEN}",

@@ -215,8 +215,8 @@ class AlhMealCard extends HTMLElement {
 
   set hass(hass) {
     if (this._hass && this._importLoading) {
-      const resultEntity = hass.states['input_text.alh_recipe_import_result'];
-      const prev = this._hass.states['input_text.alh_recipe_import_result'];
+      const resultEntity = hass.states['sensor.alh_recipe_import_result'];
+      const prev = this._hass.states['sensor.alh_recipe_import_result'];
       if (resultEntity && (!prev || resultEntity.state !== prev.state)) {
         this._handleImportResult(resultEntity.state);
       }
@@ -1199,12 +1199,11 @@ class AlhMealCard extends HTMLElement {
     this._importResult   = null;
     this._render();
     try {
-      // Step 1: URL in input_text schreiben (kein Parameter-Problem mit shell_command)
-      await this._hass.callService('input_text', 'set_value', {
-        entity_id: 'input_text.alh_recipe_import_url',
-        value: url,
+      // URL direkt per REST API schreiben – kein Entity-Setup erforderlich
+      await this._hass.callApi('POST', 'states/sensor.alh_recipe_import_url', {
+        state: url, attributes: {},
       });
-      // Step 2: Shell-Script ohne Parameter aufrufen
+      // Shell-Script ohne Parameter aufrufen
       await this._hass.callService('shell_command', 'alh_recipe_import', {});
       setTimeout(() => {
         if (this._importLoading) { this._importLoading = false; this._render(); }
