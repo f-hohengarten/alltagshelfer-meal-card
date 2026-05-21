@@ -1972,11 +1972,12 @@ class AlhMealCard extends HTMLElement {
         background: rgba(var(--rgb-primary-color,10,132,255),0.1);
         border-radius: 8px; overflow: hidden; cursor: grab; position: relative;
         transition: box-shadow 0.15s;
+        flex: 1; display: flex; flex-direction: column; min-height: 0;
       }
       .meal-entry:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
       .meal-entry:active { cursor: grabbing; }
-      .meal-entry__img { width: 100%; height: 48px; object-fit: cover; display: block; pointer-events: none; }
-      .meal-entry__body { padding: 5px 6px; pointer-events: none; }
+      .meal-entry__img { width: 100%; flex: 1; min-height: 40px; object-fit: cover; display: block; pointer-events: none; }
+      .meal-entry__body { padding: 5px 6px; pointer-events: none; flex-shrink: 0; }
       .meal-entry__title {
         font-size: 12px; font-weight: 600; line-height: 1.3;
         color: var(--primary-text-color,currentColor);
