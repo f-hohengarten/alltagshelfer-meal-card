@@ -192,6 +192,7 @@ class AlhMealCard extends HTMLElement {
     this._importResult    = null;
     this._planSearch      = '';
     this._dragPlanUid     = null;
+    this._recipeDetail    = null; // uid of recipe shown in detail overlay
   }
 
   _blankRecipeForm() {
@@ -341,6 +342,7 @@ class AlhMealCard extends HTMLElement {
         ${this._activePanel === 'recipe-form' ? this._renderRecipeForm() : ''}
         ${this._activePanel === 'plan-form'   ? this._renderPlanForm()   : ''}
       </div>
+      ${this._recipeDetail ? this._renderRecipeDetailOverlay() : ''}
     `;
     this._bind();
     this._restoreFocus();
@@ -554,7 +556,7 @@ class AlhMealCard extends HTMLElement {
     const score    = meta.score;
     const catLabel = CATEGORIES.find(c => c.v === meta.cat)?.l ?? meta.cat;
     return `
-      <div class="recipe-card">
+      <div class="recipe-card" data-action="open-detail" data-recipe-uid="${x(recipe.uid)}">
         ${meta.img ? `
           <div class="recipe-card__img-wrap">
             <img class="recipe-card__img" src="${x(meta.img)}" alt="" loading="lazy"
@@ -689,6 +691,78 @@ class AlhMealCard extends HTMLElement {
             ` : ''}
           `}
         ` : ''}
+      </div>
+    `;
+  }
+
+  // ─── Recipe Detail Overlay ───────────────────────────────────────────────────
+
+  _renderRecipeDetailOverlay() {
+    const recipe = this._recipes.find(r => r.uid === this._recipeDetail);
+    if (!recipe) return '';
+    const meta     = parseRecipeMeta(recipe.description);
+    const catLabel = CATEGORIES.find(c => c.v === meta.cat)?.l ?? meta.cat;
+    return `
+      <div class="detail-backdrop" data-action="close-detail">
+        <div class="detail-modal" role="dialog">
+          ${meta.img ? `
+            <div class="detail-img-wrap">
+              <img class="detail-img" src="${x(meta.img)}" alt="" draggable="false"
+                onerror="this.closest('.detail-img-wrap').style.display='none'" />
+              <div class="detail-img-overlay">
+                <span class="cat-badge cat-badge--${x(meta.cat)}">${x(catLabel)}</span>
+                ${meta.score ? `<span class="nutri-badge" style="background:${nutriColor(meta.score)};color:${nutriTextColor(meta.score)}">${meta.score}</span>` : ''}
+              </div>
+            </div>
+          ` : `
+            <div class="detail-no-img">
+              <span class="cat-badge cat-badge--${x(meta.cat)}">${x(catLabel)}</span>
+              ${meta.score ? `<span class="nutri-badge" style="background:${nutriColor(meta.score)};color:${nutriTextColor(meta.score)}">${meta.score}</span>` : ''}
+            </div>
+          `}
+
+          <button class="detail-close icon-btn" data-action="close-detail" aria-label="Schließen">
+            <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          </button>
+
+          <div class="detail-body">
+            <h2 class="detail-title">${x(recipe.summary)}</h2>
+            <div class="detail-meta-row">
+              <span class="detail-meta-item">
+                <svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+                ${meta.srv} Portionen
+              </span>
+              ${meta.ingredients.length > 0 ? `
+                <span class="detail-meta-item">${meta.ingredients.length} Zutaten</span>
+              ` : ''}
+            </div>
+
+            ${meta.note ? `<p class="detail-note">${x(meta.note)}</p>` : ''}
+
+            ${meta.ingredients.length > 0 ? `
+              <div class="detail-section-label">Zutaten</div>
+              <ul class="detail-ing-list">
+                ${meta.ingredients.map(ing => `
+                  <li class="detail-ing-item">
+                    <span class="detail-ing-amount">${x(ing.amount)} ${x(ing.unit)}</span>
+                    <span class="detail-ing-name">${x(ing.name)}</span>
+                  </li>
+                `).join('')}
+              </ul>
+            ` : ''}
+
+            <div class="detail-actions">
+              <button class="btn btn--ghost" data-action="edit-recipe" data-recipe-uid="${x(recipe.uid)}">
+                <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                Bearbeiten
+              </button>
+              <button class="btn btn--primary" data-action="plan-recipe" data-recipe-uid="${x(recipe.uid)}">
+                <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z"/></svg>
+                Einplanen
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     `;
   }
@@ -974,14 +1048,18 @@ class AlhMealCard extends HTMLElement {
         const iso  = cell.dataset.dropIso;
         const slot = cell.dataset.dropSlot;
         if (!uid || !iso || !slot) return;
-        const planItem = this._plan.find(p => p.uid === uid);
-        if (!planItem) return;
+        const planIdx = this._plan.findIndex(p => p.uid === uid);
+        if (planIdx < 0) return;
+        const planItem = this._plan[planIdx];
         const meta    = parsePlanMeta(planItem.description);
         const newDesc = encodePlanMeta({ recipe_id: meta.recipe_id, srv: meta.srv, slot });
+        // Optimistic update: reflect change immediately without waiting for HA round-trip
+        this._plan[planIdx] = { ...planItem, due: iso, description: newDesc };
+        this._dragPlanUid = null;
+        this._render();
         this._svc(this._config.plan_entity, 'update_item', {
           item: uid, due_date: iso, description: newDesc,
         });
-        this._dragPlanUid = null;
       });
     });
 
@@ -1011,13 +1089,34 @@ class AlhMealCard extends HTMLElement {
     });
 
     // Edit recipe
+    // Recipe detail overlay
+    root.querySelectorAll('[data-action="open-detail"]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        // Don't open detail when clicking edit/plan buttons inside the card
+        if (e.target.closest('[data-action="edit-recipe"],[data-action="plan-recipe"]')) return;
+        this._recipeDetail = el.dataset.recipeUid;
+        this._render();
+      });
+    });
+    root.querySelectorAll('[data-action="close-detail"]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        if (e.target !== el && !el.classList.contains('detail-close')) return;
+        this._recipeDetail = null;
+        this._render();
+      });
+    });
+
     root.querySelectorAll('[data-action="edit-recipe"]').forEach(el => {
-      el.addEventListener('click', () => this._openEditRecipe(el.dataset.recipeUid));
+      el.addEventListener('click', () => {
+        this._recipeDetail = null;
+        this._openEditRecipe(el.dataset.recipeUid);
+      });
     });
 
     // Plan recipe from recipe card
     root.querySelectorAll('[data-action="plan-recipe"]').forEach(el => {
       el.addEventListener('click', () => {
+        this._recipeDetail = null;
         this._openPlanForm('', el.dataset.recipeUid);
       });
     });
@@ -1945,6 +2044,83 @@ class AlhMealCard extends HTMLElement {
 
       @media (prefers-color-scheme: dark) {
         .form__select, .plan-form__date { color-scheme: dark; }
+      }
+
+      /* ── Recipe Detail Overlay ── */
+      .detail-backdrop {
+        position: fixed; inset: 0; z-index: 9999;
+        background: rgba(0,0,0,0.72); backdrop-filter: blur(6px);
+        display: flex; align-items: center; justify-content: center;
+        padding: 16px;
+        animation: fadeIn 0.18s ease;
+      }
+      @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+
+      .detail-modal {
+        background: var(--ha-card-background, #1c1c1e);
+        border-radius: 20px; overflow: hidden;
+        width: 100%; max-width: 560px; max-height: 90vh;
+        display: flex; flex-direction: column;
+        box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+        animation: slideUp 0.2s ease;
+        position: relative;
+      }
+      @keyframes slideUp { from { transform: translateY(16px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
+
+      .detail-img-wrap { position: relative; aspect-ratio: 16/9; flex-shrink: 0; }
+      .detail-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .detail-img-overlay {
+        position: absolute; bottom: 10px; left: 12px; display: flex; gap: 6px; align-items: center;
+      }
+      .detail-no-img {
+        padding: 20px 16px 0; display: flex; gap: 6px; align-items: center; flex-shrink: 0;
+      }
+      .detail-close {
+        position: absolute; top: 10px; right: 10px; z-index: 1;
+        background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);
+      }
+      .detail-close svg { fill: #fff; opacity: 1; }
+
+      .detail-body {
+        padding: 16px 20px 20px; overflow-y: auto; flex: 1;
+        display: flex; flex-direction: column; gap: 10px;
+      }
+      .detail-title {
+        font-size: 20px; font-weight: 700; line-height: 1.25; margin: 0;
+        color: var(--primary-text-color, currentColor);
+      }
+      .detail-meta-row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+      .detail-meta-item {
+        display: flex; align-items: center; gap: 5px;
+        font-size: 14px; color: var(--secondary-text-color, currentColor); opacity: 0.7;
+      }
+      .detail-meta-item svg { width: 16px; height: 16px; fill: currentColor; }
+      .detail-note {
+        font-size: 14px; line-height: 1.5; margin: 0;
+        color: var(--secondary-text-color, currentColor); opacity: 0.8;
+        font-style: italic;
+      }
+      .detail-section-label {
+        font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+        color: var(--secondary-text-color, currentColor); opacity: 0.5;
+        margin-top: 4px;
+      }
+      .detail-ing-list {
+        list-style: none; margin: 0; padding: 0;
+        display: flex; flex-direction: column; gap: 2px;
+      }
+      .detail-ing-item {
+        display: flex; align-items: baseline; gap: 10px;
+        padding: 6px 10px; border-radius: 8px;
+        background: rgba(128,128,128,0.05);
+      }
+      .detail-ing-amount {
+        font-size: 13px; font-weight: 600; min-width: 70px; flex-shrink: 0;
+        color: var(--primary-color, #0A84FF);
+      }
+      .detail-ing-name { font-size: 14px; color: var(--primary-text-color, currentColor); }
+      .detail-actions {
+        display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px;
       }
     `;
   }
