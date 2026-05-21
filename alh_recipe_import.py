@@ -57,23 +57,34 @@ except Exception as e:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def fetch_url(url):
-    import gzip, zlib
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding": "gzip, deflate",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-        }
+    import gzip, zlib, ssl, http.cookiejar
+
+    jar    = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(jar),
+        urllib.request.HTTPSHandler(context=ssl.create_default_context()),
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:
+
+    req = urllib.request.Request(url)
+    req.add_header("User-Agent",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36")
+    req.add_header("Accept",
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,image/apng,*/*;q=0.8")
+    req.add_header("Accept-Language", "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7")
+    req.add_header("Accept-Encoding", "gzip, deflate")
+    req.add_header("Connection", "keep-alive")
+    req.add_header("Upgrade-Insecure-Requests", "1")
+    req.add_header("Sec-Fetch-Dest", "document")
+    req.add_header("Sec-Fetch-Mode", "navigate")
+    req.add_header("Sec-Fetch-Site", "none")
+    req.add_header("Sec-Fetch-User", "?1")
+    req.add_header("Cache-Control", "max-age=0")
+    req.add_header("Referer", "https://www.google.de/")
+
+    with opener.open(req, timeout=15) as resp:
         raw = resp.read()
         enc = resp.headers.get("Content-Encoding", "")
         if enc == "gzip":
