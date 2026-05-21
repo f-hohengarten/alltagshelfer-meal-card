@@ -914,7 +914,7 @@ class AlhMealCard extends HTMLElement {
                   3. Alles kopieren (<code>Strg+A</code>, <code>Strg+C</code>) &nbsp;→&nbsp;
                   4. Hier einfügen:
                 </p>
-                <textarea class="import-paste-textarea form__textarea" rows="4"
+                <textarea class="import-paste-textarea" rows="4"
                   placeholder="&lt;!DOCTYPE html&gt;…"></textarea>
                 <button class="btn btn--primary btn--sm" data-action="parse-paste" style="margin-top:6px">
                   Rezept aus Quelltext lesen
@@ -2171,7 +2171,7 @@ class AlhMealCard extends HTMLElement {
       }
       .form__select--full { width: 100%; box-sizing: border-box; padding: 10px 14px; font-size: 14px; }
 
-      .form__textarea {
+      .form__textarea, .import-paste-textarea {
         width: 100%; box-sizing: border-box;
         background: rgba(128,128,128,0.08);
         border: 1px solid rgba(128,128,128,0.15); border-radius: 10px;
@@ -2179,8 +2179,8 @@ class AlhMealCard extends HTMLElement {
         color: var(--primary-text-color, currentColor); outline: none; resize: vertical;
         transition: border-color 0.15s;
       }
-      .form__textarea::placeholder { color: var(--secondary-text-color, currentColor); opacity: 0.4; }
-      .form__textarea:focus { border-color: var(--primary-color, #0A84FF); }
+      .form__textarea::placeholder, .import-paste-textarea::placeholder { color: var(--secondary-text-color, currentColor); opacity: 0.4; }
+      .form__textarea:focus, .import-paste-textarea:focus { border-color: var(--primary-color, #0A84FF); }
 
       .form__actions {
         display: flex; gap: 8px; margin-top: 14px; justify-content: flex-end; align-items: center;
