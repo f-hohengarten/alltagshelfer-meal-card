@@ -224,6 +224,7 @@ class AlhMealCard extends HTMLElement {
     this._importLoading   = false;
     this._importResult    = null;
     this._importPasteMode = false;
+    this._importPasteHtml = '';
     this._planSearch      = '';
     this._dragPlanUid     = null;
     this._recipeDetail    = null; // uid of recipe shown in detail overlay
@@ -359,7 +360,7 @@ class AlhMealCard extends HTMLElement {
     const titleEl   = this.shadowRoot.querySelector('.form__title-input');
     if (titleEl)     this._recipeForm.title = titleEl.value;
 
-    const noteEl    = this.shadowRoot.querySelector('.form__textarea');
+    const noteEl    = this.shadowRoot.querySelector('.form__note');
     if (noteEl)      this._recipeForm.note  = noteEl.value;
 
     const urlEl     = this.shadowRoot.querySelector('.import__url');
@@ -981,7 +982,7 @@ class AlhMealCard extends HTMLElement {
         </div>
 
         <div class="form__section-label">Notiz (optional)</div>
-        <textarea class="form__textarea" placeholder="Kurze Beschreibung oder Tipps…" rows="2">${x(f.note)}</textarea>
+        <textarea class="form__note" placeholder="Kurze Beschreibung oder Tipps…" rows="2">${x(f.note)}</textarea>
 
         <div class="form__actions">
           ${isEdit ? `<button class="btn btn--danger" data-action="delete-recipe">Löschen</button>` : ''}
@@ -1426,18 +1427,25 @@ class AlhMealCard extends HTMLElement {
     const togglePaste = root.querySelector('[data-action="toggle-paste-mode"]');
     if (togglePaste) togglePaste.addEventListener('click', () => {
       this._importPasteMode = !this._importPasteMode;
+      this._importPasteHtml = '';
       this._render();
+    });
+
+    // Store paste content in state on every keystroke — avoids DOM-read timing issues
+    const pasteArea = root.querySelector('.import-paste-textarea');
+    if (pasteArea) pasteArea.addEventListener('input', () => {
+      this._importPasteHtml = pasteArea.value;
     });
 
     const parsePaste = root.querySelector('[data-action="parse-paste"]');
     if (parsePaste) parsePaste.addEventListener('click', () => {
-      const ta = this.shadowRoot.querySelector('.import-paste-textarea');
-      const html = ta?.value?.trim();
+      const html = this._importPasteHtml.trim();
       if (!html) return;
       const recipe = extractJsonLdFromHtml(html);
       if (!recipe) {
-        this._importResult = { error: 'Kein Rezept im Quelltext gefunden.' };
+        this._importResult = { error: 'Kein Rezept im Quelltext gefunden. Stelle sicher, dass du den kompletten Seitenquelltext (Strg+U) kopiert hast.' };
         this._importPasteMode = false;
+        this._importPasteHtml = '';
         this._render();
         return;
       }
@@ -1458,6 +1466,7 @@ class AlhMealCard extends HTMLElement {
       if (img) this._recipeForm.img = String(img).split('?')[0];
       this._importResult = { title };
       this._importPasteMode = false;
+      this._importPasteHtml = '';
       this._render();
     });
 
@@ -1544,10 +1553,11 @@ class AlhMealCard extends HTMLElement {
   // ─── Actions ─────────────────────────────────────────────────────────────────
 
   _openCreateRecipe() {
-    this._recipeForm    = this._blankRecipeForm();
-    this._importResult  = null;
+    this._recipeForm      = this._blankRecipeForm();
+    this._importResult    = null;
     this._importPasteMode = false;
-    this._activePanel   = 'recipe-form';
+    this._importPasteHtml = '';
+    this._activePanel     = 'recipe-form';
     this._render();
   }
 
@@ -1606,7 +1616,7 @@ class AlhMealCard extends HTMLElement {
 
   _submitRecipe() {
     const titleEl = this.shadowRoot.querySelector('.form__title-input');
-    const noteEl  = this.shadowRoot.querySelector('.form__textarea');
+    const noteEl  = this.shadowRoot.querySelector('.form__note');
     const title   = (titleEl?.value ?? this._recipeForm.title).trim();
     if (!title) {
       if (titleEl) { titleEl.focus(); titleEl.style.borderColor = 'var(--error-color, #f44336)'; }
@@ -2171,7 +2181,7 @@ class AlhMealCard extends HTMLElement {
       }
       .form__select--full { width: 100%; box-sizing: border-box; padding: 10px 14px; font-size: 14px; }
 
-      .form__textarea, .import-paste-textarea {
+      .form__note, .import-paste-textarea {
         width: 100%; box-sizing: border-box;
         background: rgba(128,128,128,0.08);
         border: 1px solid rgba(128,128,128,0.15); border-radius: 10px;
@@ -2179,8 +2189,8 @@ class AlhMealCard extends HTMLElement {
         color: var(--primary-text-color, currentColor); outline: none; resize: vertical;
         transition: border-color 0.15s;
       }
-      .form__textarea::placeholder, .import-paste-textarea::placeholder { color: var(--secondary-text-color, currentColor); opacity: 0.4; }
-      .form__textarea:focus, .import-paste-textarea:focus { border-color: var(--primary-color, #0A84FF); }
+      .form__note::placeholder, .import-paste-textarea::placeholder { color: var(--secondary-text-color, currentColor); opacity: 0.4; }
+      .form__note:focus, .import-paste-textarea:focus { border-color: var(--primary-color, #0A84FF); }
 
       .form__actions {
         display: flex; gap: 8px; margin-top: 14px; justify-content: flex-end; align-items: center;
