@@ -1461,19 +1461,36 @@ class AlhMealCard extends HTMLElement {
     if (parsePaste) parsePaste.addEventListener('click', () => {
       const pasteEl = this.shadowRoot.querySelector('.import-paste-textarea');
       const html = (pasteEl?.value || this._importPasteHtml || '').trim();
+
+      const dbg = [];
+      dbg.push(`HTML-Länge: ${html.length} Zeichen`);
+
       if (!html) {
-        this._importResult = { error: 'Kein Quelltext eingefügt. Bitte zuerst den Seitenquelltext einfügen.' };
+        this._importResult = { error: 'DEBUG: ' + dbg.join(' | ') + ' → Textarea leer!' };
         this._render();
         return;
       }
+
+      // Count script blocks found
+      const ldMatches   = (html.match(/<script[^>]+type=["']application\/ld\+json["'][^>]*>/gi) || []).length;
+      const ndMatch     = /<script[^>]+id=["']__NEXT_DATA__["'][^>]*>/i.test(html);
+      const jsonMatches = (html.match(/<script[^>]+type=["']application\/json["'][^>]*>/gi) || []).length;
+      dbg.push(`ld+json-Blöcke: ${ldMatches}`);
+      dbg.push(`__NEXT_DATA__: ${ndMatch}`);
+      dbg.push(`application/json-Blöcke: ${jsonMatches}`);
+
       const recipe = extractJsonLdFromHtml(html);
+      dbg.push(`Rezept gefunden: ${!!recipe}`);
+      if (recipe) dbg.push(`@type: ${recipe['@type']}, name: ${recipe.name}`);
+
       if (!recipe) {
-        this._importResult = { error: 'Kein Rezept im Quelltext gefunden. Stelle sicher, dass du den kompletten Seitenquelltext (Strg+U) kopiert hast.' };
+        this._importResult = { error: 'DEBUG: ' + dbg.join(' | ') };
         this._importPasteMode = false;
         this._importPasteHtml = '';
         this._render();
         return;
       }
+
       const title = String(recipe.name || '').replace(/<[^>]+>/g, '').trim();
       if (title) this._recipeForm.title = title;
       const rawIngs = recipe.recipeIngredient || [];
