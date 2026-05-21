@@ -57,12 +57,30 @@ except Exception as e:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def fetch_url(url):
+    import gzip, zlib
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "Mozilla/5.0 (compatible; ALH-Importer/1.0)"}
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept-Encoding": "gzip, deflate",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+        }
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        return resp.read().decode("utf-8", errors="replace")
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        raw = resp.read()
+        enc = resp.headers.get("Content-Encoding", "")
+        if enc == "gzip":
+            raw = gzip.decompress(raw)
+        elif enc == "deflate":
+            raw = zlib.decompress(raw)
+        return raw.decode("utf-8", errors="replace")
 
 
 def extract_json_ld(html):
