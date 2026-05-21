@@ -382,9 +382,6 @@ class AlhMealCard extends HTMLElement {
     if (ingAmtEl)    this._recipeForm._ingAmount  = ingAmtEl.value;
     if (ingUnitEl)   this._recipeForm._ingUnit    = ingUnitEl.value;
 
-    const titleEl   = this.shadowRoot.querySelector('.form__title-input');
-    if (titleEl)     this._recipeForm.title = titleEl.value;
-
     const noteEl    = this.shadowRoot.querySelector('.form__note');
     if (noteEl)      this._recipeForm.note  = noteEl.value;
 
@@ -1520,6 +1517,9 @@ class AlhMealCard extends HTMLElement {
     // parse-paste is handled by the permanent delegated listener in the constructor
 
     const titleInput = root.querySelector('.form__title-input');
+    if (titleInput) titleInput.addEventListener('input', () => {
+      this._recipeForm.title = titleInput.value;
+    });
     if (titleInput) titleInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); this._submitRecipe(); }
       if (e.key === 'Escape') {
