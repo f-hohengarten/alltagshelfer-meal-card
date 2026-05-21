@@ -2148,13 +2148,13 @@ class AlhMealCard extends HTMLElement {
         font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 4px; flex-shrink: 0;
       }
       .cat-badge--pasta       { background: rgba(6,49,67,0.8);   color: #5AC8F5; }
-      .cat-badge--salat       { background: rgba(50,215,75,0.15);    color: #32D74B; }
+      .cat-badge--salat       { background: rgba(9, 79, 20, 0.8);    color: #32D74B; }
       .cat-badge--fleisch     { background: rgba(59,38,5,0.8);   color: #FF9F0A; }
       .cat-badge--vegetarisch { background: rgba(9,64,17,0.8);    color: #32D74B; }
       .cat-badge--suppe       { background: rgba(9,76,53,0.8);  color: #6adc91; }
-      .cat-badge--snack       { background: rgba(255,214,10,0.15);   color: #b39600; }
+      .cat-badge--snack       { background: rgba(100, 85, 10, 0.8);   color: #b39600; }
       .cat-badge--dessert     { background: rgba(52, 12, 72, 0.8);   color: #BF5AF2; }
-      .cat-badge--sonstiges   { background: rgba(128,128,128,0.12);  color: var(--secondary-text-color,currentColor); }
+      .cat-badge--sonstiges   { background: rgba(53, 53, 53, 0.8);  color: var(--secondary-text-color,currentColor); }
 
       /* ── Woche View ── */
       .woche { padding: 0 12px 12px; flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
