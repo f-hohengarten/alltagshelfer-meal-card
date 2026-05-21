@@ -56,34 +56,58 @@ except Exception as e:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def fetch_url(url):
-    import gzip, zlib, ssl, http.cookiejar
+BROWSER_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
 
+def fetch_url_curl(url):
+    """Fetch via curl — different TLS fingerprint, bypasses most bot detection."""
+    import subprocess, shutil
+    curl = shutil.which("curl") or "/usr/bin/curl"
+    result = subprocess.run([
+        curl, "-s", "-L", "--compressed",
+        "--max-time", "15",
+        "--cookie-jar", "/tmp/alh_cookies.txt",
+        "--cookie",    "/tmp/alh_cookies.txt",
+        "-A", BROWSER_UA,
+        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "-H", "Accept-Language: de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+        "-H", "Sec-Fetch-Dest: document",
+        "-H", "Sec-Fetch-Mode: navigate",
+        "-H", "Sec-Fetch-Site: none",
+        "-H", "Sec-Fetch-User: ?1",
+        "-H", "Cache-Control: max-age=0",
+        "-H", "Referer: https://www.google.de/",
+        url,
+    ], capture_output=True, timeout=20)
+    if result.returncode != 0:
+        raise Exception(f"curl exit {result.returncode}: {result.stderr.decode(errors='replace')[:200]}")
+    html = result.stdout.decode("utf-8", errors="replace")
+    if not html.strip():
+        raise Exception("curl returned empty body")
+    return html
+
+
+def fetch_url_urllib(url):
+    """Fallback: urllib with browser-like headers."""
+    import gzip, zlib, ssl, http.cookiejar
     jar    = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(
         urllib.request.HTTPCookieProcessor(jar),
         urllib.request.HTTPSHandler(context=ssl.create_default_context()),
     )
-
     req = urllib.request.Request(url)
-    req.add_header("User-Agent",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36")
-    req.add_header("Accept",
-        "text/html,application/xhtml+xml,application/xml;q=0.9,"
-        "image/avif,image/webp,image/apng,*/*;q=0.8")
+    req.add_header("User-Agent", BROWSER_UA)
+    req.add_header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
     req.add_header("Accept-Language", "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7")
     req.add_header("Accept-Encoding", "gzip, deflate")
-    req.add_header("Connection", "keep-alive")
-    req.add_header("Upgrade-Insecure-Requests", "1")
     req.add_header("Sec-Fetch-Dest", "document")
     req.add_header("Sec-Fetch-Mode", "navigate")
     req.add_header("Sec-Fetch-Site", "none")
     req.add_header("Sec-Fetch-User", "?1")
     req.add_header("Cache-Control", "max-age=0")
-    req.add_header("Referer", "https://www.google.de/")
-
     with opener.open(req, timeout=15) as resp:
         raw = resp.read()
         enc = resp.headers.get("Content-Encoding", "")
@@ -92,6 +116,16 @@ def fetch_url(url):
         elif enc == "deflate":
             raw = zlib.decompress(raw)
         return raw.decode("utf-8", errors="replace")
+
+
+def fetch_url(url):
+    try:
+        html = fetch_url_curl(url)
+        log("Fetch via curl erfolgreich")
+        return html
+    except Exception as e:
+        log(f"curl fehlgeschlagen ({e}), versuche urllib …")
+        return fetch_url_urllib(url)
 
 
 def extract_json_ld(html):
