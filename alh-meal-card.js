@@ -220,6 +220,14 @@ class AlhMealCard extends HTMLElement {
     super();
     this.attachShadow({ mode: 'open' });
 
+    // Permanent delegated handler — survives every innerHTML re-render.
+    // querySelector-based per-element bindings in _bind() are racy when async
+    // fetches trigger re-renders between the button appearing and the user's click.
+    this.shadowRoot.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-action="parse-paste"]');
+      if (btn) this._handleParsePaste();
+    });
+
     this._recipes  = [];
     this._plan     = [];
     this._config   = { recipe_entity: '', plan_entity: '', shopping_entity: '', title: 'Mahlzeitenplaner' };
@@ -936,7 +944,7 @@ class AlhMealCard extends HTMLElement {
                   4. Hier einfügen:
                 </p>
                 <textarea class="import-paste-textarea" rows="4"
-                  placeholder="&lt;!DOCTYPE html&gt;…"></textarea>
+                  placeholder="&lt;!DOCTYPE html&gt;…">${x(this._importPasteHtml)}</textarea>
                 <button class="btn btn--primary btn--sm" data-action="parse-paste" style="margin-top:6px">
                   Rezept aus Quelltext lesen
                 </button>
@@ -1087,6 +1095,60 @@ class AlhMealCard extends HTMLElement {
         </div>
       </div>
     `;
+  }
+
+  // ─── Paste Handler ───────────────────────────────────────────────────────────
+
+  _handleParsePaste() {
+    const pasteEl = this.shadowRoot.querySelector('.import-paste-textarea');
+    const html = (pasteEl?.value || this._importPasteHtml || '').trim();
+
+    const dbg = [];
+    dbg.push(`HTML-Länge: ${html.length} Zeichen`);
+
+    if (!html) {
+      this._importResult = { error: 'Textarea leer — bitte erst Quelltext einfügen. (debug: ' + dbg.join(' | ') + ')' };
+      this._render();
+      return;
+    }
+
+    const ldMatches   = (html.match(/<script[^>]+type=["']application\/ld\+json["'][^>]*>/gi) || []).length;
+    const ndMatch     = /<script[^>]+id=["']__NEXT_DATA__["'][^>]*>/i.test(html);
+    const jsonMatches = (html.match(/<script[^>]+type=["']application\/json["'][^>]*>/gi) || []).length;
+    dbg.push(`ld+json: ${ldMatches}`);
+    dbg.push(`__NEXT_DATA__: ${ndMatch}`);
+    dbg.push(`json: ${jsonMatches}`);
+
+    const recipe = extractJsonLdFromHtml(html);
+    dbg.push(`Rezept: ${!!recipe}`);
+
+    if (!recipe) {
+      this._importResult = { error: 'Kein Rezept im Quelltext gefunden. (' + dbg.join(', ') + ')' };
+      this._importPasteMode = false;
+      this._importPasteHtml = '';
+      this._render();
+      return;
+    }
+
+    const title = String(recipe.name || '').replace(/<[^>]+>/g, '').trim();
+    if (title) this._recipeForm.title = title;
+    const rawIngs = recipe.recipeIngredient || [];
+    if (rawIngs.length) {
+      this._recipeForm.ingredients = rawIngs
+        .map(i => parseIngredientJs(String(i)))
+        .filter(i => i.name);
+    }
+    const srvRaw = Array.isArray(recipe.recipeYield) ? recipe.recipeYield[0] : recipe.recipeYield;
+    const srvM = String(srvRaw || '').match(/\d+/);
+    if (srvM) this._recipeForm.srv = parseInt(srvM[0]) || 4;
+    let img = recipe.image || '';
+    if (Array.isArray(img)) img = img[0] || '';
+    if (img && typeof img === 'object') img = img.url || '';
+    if (img) this._recipeForm.img = String(img).split('?')[0];
+    this._importResult = { title };
+    this._importPasteMode = false;
+    this._importPasteHtml = '';
+    this._render();
   }
 
   // ─── Event Binding ───────────────────────────────────────────────────────────
@@ -1457,60 +1519,7 @@ class AlhMealCard extends HTMLElement {
       this._importPasteHtml = pasteArea.value;
     });
 
-    const parsePaste = root.querySelector('[data-action="parse-paste"]');
-    if (parsePaste) parsePaste.addEventListener('click', () => {
-      const pasteEl = this.shadowRoot.querySelector('.import-paste-textarea');
-      const html = (pasteEl?.value || this._importPasteHtml || '').trim();
-
-      const dbg = [];
-      dbg.push(`HTML-Länge: ${html.length} Zeichen`);
-
-      if (!html) {
-        this._importResult = { error: 'DEBUG: ' + dbg.join(' | ') + ' → Textarea leer!' };
-        this._render();
-        return;
-      }
-
-      // Count script blocks found
-      const ldMatches   = (html.match(/<script[^>]+type=["']application\/ld\+json["'][^>]*>/gi) || []).length;
-      const ndMatch     = /<script[^>]+id=["']__NEXT_DATA__["'][^>]*>/i.test(html);
-      const jsonMatches = (html.match(/<script[^>]+type=["']application\/json["'][^>]*>/gi) || []).length;
-      dbg.push(`ld+json-Blöcke: ${ldMatches}`);
-      dbg.push(`__NEXT_DATA__: ${ndMatch}`);
-      dbg.push(`application/json-Blöcke: ${jsonMatches}`);
-
-      const recipe = extractJsonLdFromHtml(html);
-      dbg.push(`Rezept gefunden: ${!!recipe}`);
-      if (recipe) dbg.push(`@type: ${recipe['@type']}, name: ${recipe.name}`);
-
-      if (!recipe) {
-        this._importResult = { error: 'DEBUG: ' + dbg.join(' | ') };
-        this._importPasteMode = false;
-        this._importPasteHtml = '';
-        this._render();
-        return;
-      }
-
-      const title = String(recipe.name || '').replace(/<[^>]+>/g, '').trim();
-      if (title) this._recipeForm.title = title;
-      const rawIngs = recipe.recipeIngredient || [];
-      if (rawIngs.length) {
-        this._recipeForm.ingredients = rawIngs
-          .map(i => parseIngredientJs(String(i)))
-          .filter(i => i.name);
-      }
-      const srvRaw = Array.isArray(recipe.recipeYield) ? recipe.recipeYield[0] : recipe.recipeYield;
-      const srvM = String(srvRaw || '').match(/\d+/);
-      if (srvM) this._recipeForm.srv = parseInt(srvM[0]) || 4;
-      let img = recipe.image || '';
-      if (Array.isArray(img)) img = img[0] || '';
-      if (img && typeof img === 'object') img = img.url || '';
-      if (img) this._recipeForm.img = String(img).split('?')[0];
-      this._importResult = { title };
-      this._importPasteMode = false;
-      this._importPasteHtml = '';
-      this._render();
-    });
+    // parse-paste is handled by the permanent delegated listener in the constructor
 
     const titleInput = root.querySelector('.form__title-input');
     if (titleInput) titleInput.addEventListener('keydown', (e) => {
