@@ -193,6 +193,9 @@ class AlhMealCard extends HTMLElement {
     this._planSearch      = '';
     this._dragPlanUid     = null;
     this._recipeDetail    = null; // uid of recipe shown in detail overlay
+    this._detailPlanUid   = null; // plan uid if detail opened from week view
+    this._detailChanging  = false;
+    this._detailChangeSearch = '';
   }
 
   _blankRecipeForm() {
@@ -412,6 +415,7 @@ class AlhMealCard extends HTMLElement {
             const rmeta  = recipe ? parseRecipeMeta(recipe.description) : {};
             return `
               <div class="meal-entry" draggable="true" data-plan-uid="${x(p.uid)}"
+                data-action="open-detail-from-plan" data-recipe-uid="${x(meta.recipe_id)}"
                 data-iso="${x(iso)}" data-slot="${x(slot)}">
                 ${rmeta.img ? `<img class="meal-entry__img" src="${x(rmeta.img)}" alt=""
                   loading="lazy" draggable="false" onerror="this.style.display='none'" />` : ''}
@@ -751,16 +755,54 @@ class AlhMealCard extends HTMLElement {
               </ul>
             ` : ''}
 
-            <div class="detail-actions">
-              <button class="btn btn--ghost" data-action="edit-recipe" data-recipe-uid="${x(recipe.uid)}">
-                <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-                Bearbeiten
-              </button>
-              <button class="btn btn--primary" data-action="plan-recipe" data-recipe-uid="${x(recipe.uid)}">
-                <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z"/></svg>
-                Einplanen
-              </button>
-            </div>
+            ${this._detailChanging ? `
+              <div class="detail-change-wrap">
+                <div class="detail-section-label">Anderes Rezept wählen</div>
+                <div class="plan-recipe-search-wrap">
+                  <input class="detail-change-search form__input" type="search"
+                    placeholder="Rezept suchen…" value="${x(this._detailChangeSearch)}" autocomplete="off" />
+                  ${(() => {
+                    const q = this._detailChangeSearch.toLowerCase();
+                    if (!q) return '';
+                    const results = this._recipes
+                      .filter(r => r.status !== 'completed' && r.uid !== recipe.uid && r.summary.toLowerCase().includes(q))
+                      .slice(0, 6);
+                    if (!results.length) return '<div class="plan-recipe-dropdown"><div class="plan-recipe-option plan-recipe-option--empty">Keine Ergebnisse</div></div>';
+                    return `<div class="plan-recipe-dropdown">
+                      ${results.map(r => {
+                        const m = parseRecipeMeta(r.description);
+                        const catL = CATEGORIES.find(c => c.v === m.cat)?.l ?? m.cat;
+                        return `<div class="detail-change-option plan-recipe-option" data-recipe-uid="${x(r.uid)}">
+                          <span class="plan-recipe-option__title">${x(r.summary)}</span>
+                          <span class="plan-recipe-option__meta">${x(catL)} · ${m.srv} Pers.</span>
+                        </div>`;
+                      }).join('')}
+                    </div>`;
+                  })()}
+                </div>
+                <div class="detail-actions" style="margin-top:8px">
+                  <button class="btn btn--ghost" data-action="toggle-detail-change">Abbrechen</button>
+                </div>
+              </div>
+            ` : `
+              <div class="detail-actions">
+                <button class="btn btn--ghost" data-action="edit-recipe" data-recipe-uid="${x(recipe.uid)}">
+                  <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                  Bearbeiten
+                </button>
+                ${this._detailPlanUid ? `
+                  <button class="btn btn--primary" data-action="toggle-detail-change">
+                    <svg viewBox="0 0 24 24"><path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z"/></svg>
+                    Gericht ändern
+                  </button>
+                ` : `
+                  <button class="btn btn--primary" data-action="plan-recipe" data-recipe-uid="${x(recipe.uid)}">
+                    <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z"/></svg>
+                    Einplanen
+                  </button>
+                `}
+              </div>
+            `}
           </div>
         </div>
       </div>
@@ -1088,24 +1130,95 @@ class AlhMealCard extends HTMLElement {
       });
     });
 
-    // Edit recipe
-    // Recipe detail overlay
+    // Recipe detail overlay — open from recipe cards view
     root.querySelectorAll('[data-action="open-detail"]').forEach(el => {
       el.addEventListener('click', (e) => {
-        // Don't open detail when clicking edit/plan buttons inside the card
         if (e.target.closest('[data-action="edit-recipe"],[data-action="plan-recipe"]')) return;
         this._recipeDetail = el.dataset.recipeUid;
-        this._render();
-      });
-    });
-    root.querySelectorAll('[data-action="close-detail"]').forEach(el => {
-      el.addEventListener('click', (e) => {
-        if (e.target !== el && !el.classList.contains('detail-close')) return;
-        this._recipeDetail = null;
+        this._detailPlanUid = null;
+        this._detailChanging = false;
+        this._detailChangeSearch = '';
         this._render();
       });
     });
 
+    // Recipe detail overlay — open from week view (single click on meal entry)
+    root.querySelectorAll('[data-action="open-detail-from-plan"]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        if (e.target.closest('[data-action="del-plan"]')) return;
+        const recipeUid = el.dataset.recipeUid;
+        if (!recipeUid) return;
+        this._recipeDetail = recipeUid;
+        this._detailPlanUid = el.dataset.planUid;
+        this._detailChanging = false;
+        this._detailChangeSearch = '';
+        this._render();
+      });
+    });
+
+    root.querySelectorAll('[data-action="close-detail"]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        if (e.target !== el && !el.classList.contains('detail-close')) return;
+        this._recipeDetail = null;
+        this._detailPlanUid = null;
+        this._detailChanging = false;
+        this._detailChangeSearch = '';
+        this._render();
+      });
+    });
+
+    // Toggle change-recipe mode in detail overlay
+    const toggleChange = root.querySelector('[data-action="toggle-detail-change"]');
+    if (toggleChange) toggleChange.addEventListener('click', () => {
+      this._detailChanging = !this._detailChanging;
+      this._detailChangeSearch = '';
+      this._render();
+      if (this._detailChanging) {
+        setTimeout(() => {
+          const el = this.shadowRoot.querySelector('.detail-change-search');
+          if (el) el.focus();
+        }, 0);
+      }
+    });
+
+    // Search input in change-recipe mode
+    const changeSearchEl = root.querySelector('.detail-change-search');
+    if (changeSearchEl) {
+      changeSearchEl.addEventListener('input', () => {
+        this._detailChangeSearch = changeSearchEl.value;
+        this._render();
+        setTimeout(() => {
+          const el = this.shadowRoot.querySelector('.detail-change-search');
+          if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+        }, 0);
+      });
+    }
+
+    // Select replacement recipe in change mode
+    root.querySelectorAll('.detail-change-option').forEach(el => {
+      el.addEventListener('click', () => {
+        const newRecipeUid = el.dataset.recipeUid;
+        const planUid = this._detailPlanUid;
+        if (!newRecipeUid || !planUid) return;
+        const newRecipe = this._recipes.find(r => r.uid === newRecipeUid);
+        const planItem  = this._plan.find(p => p.uid === planUid);
+        if (!newRecipe || !planItem) return;
+        const oldMeta = parsePlanMeta(planItem.description);
+        const newDesc = encodePlanMeta({ recipe_id: newRecipeUid, srv: oldMeta.srv, slot: oldMeta.slot });
+        const planIdx = this._plan.findIndex(p => p.uid === planUid);
+        this._plan[planIdx] = { ...planItem, summary: newRecipe.summary, description: newDesc };
+        this._recipeDetail = newRecipeUid;
+        this._detailPlanUid = planUid;
+        this._detailChanging = false;
+        this._detailChangeSearch = '';
+        this._render();
+        this._svc(this._config.plan_entity, 'update_item', {
+          item: planUid, rename: newRecipe.summary, description: newDesc,
+        });
+      });
+    });
+
+    // Edit recipe
     root.querySelectorAll('[data-action="edit-recipe"]').forEach(el => {
       el.addEventListener('click', () => {
         this._recipeDetail = null;
@@ -2122,6 +2235,8 @@ class AlhMealCard extends HTMLElement {
       .detail-actions {
         display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px;
       }
+
+      .detail-change-wrap { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
     `;
   }
 }
