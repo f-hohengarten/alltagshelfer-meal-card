@@ -1103,11 +1103,11 @@ class AlhMealCard extends HTMLElement {
     const pasteEl = this.shadowRoot.querySelector('.import-paste-textarea');
     const html = (pasteEl?.value || this._importPasteHtml || '').trim();
 
-    const dbg = [];
-    dbg.push(`HTML-Länge: ${html.length} Zeichen`);
+    console.log('[alh-meal-card] parsePaste fired, html length:', html.length);
 
     if (!html) {
-      this._importResult = { error: 'Textarea leer — bitte erst Quelltext einfügen. (debug: ' + dbg.join(' | ') + ')' };
+      console.warn('[alh-meal-card] parsePaste: textarea is empty');
+      this._importResult = { error: 'Textarea leer — bitte erst Quelltext einfügen.' };
       this._render();
       return;
     }
@@ -1115,15 +1115,13 @@ class AlhMealCard extends HTMLElement {
     const ldMatches   = (html.match(/<script[^>]+type=["']application\/ld\+json["'][^>]*>/gi) || []).length;
     const ndMatch     = /<script[^>]+id=["']__NEXT_DATA__["'][^>]*>/i.test(html);
     const jsonMatches = (html.match(/<script[^>]+type=["']application\/json["'][^>]*>/gi) || []).length;
-    dbg.push(`ld+json: ${ldMatches}`);
-    dbg.push(`__NEXT_DATA__: ${ndMatch}`);
-    dbg.push(`json: ${jsonMatches}`);
+    console.log('[alh-meal-card] parsePaste script blocks — ld+json:', ldMatches, '__NEXT_DATA__:', ndMatch, 'application/json:', jsonMatches);
 
     const recipe = extractJsonLdFromHtml(html);
-    dbg.push(`Rezept: ${!!recipe}`);
+    console.log('[alh-meal-card] parsePaste recipe found:', !!recipe, recipe?.name);
 
     if (!recipe) {
-      this._importResult = { error: 'Kein Rezept im Quelltext gefunden. (' + dbg.join(', ') + ')' };
+      this._importResult = { error: 'Kein Rezept im Quelltext gefunden.' };
       this._importPasteMode = false;
       this._importPasteHtml = '';
       this._render();
@@ -1513,10 +1511,11 @@ class AlhMealCard extends HTMLElement {
       this._render();
     });
 
-    // Store paste content in state on every keystroke — avoids DOM-read timing issues
+    // Store paste content in state on every input — avoids DOM-read timing issues
     const pasteArea = root.querySelector('.import-paste-textarea');
     if (pasteArea) pasteArea.addEventListener('input', () => {
       this._importPasteHtml = pasteArea.value;
+      console.log('[alh-meal-card] paste textarea input, length:', pasteArea.value.length);
     });
 
     // parse-paste is handled by the permanent delegated listener in the constructor
