@@ -39,20 +39,40 @@ const MONTH_NAMES     = ['Januar','Februar','März','April','Mai','Juni','Juli',
 
 // ─── Client-side recipe extraction (fallback for bot-protected sites) ─────────
 
+function findRecipeInObj(o, depth) {
+  if (depth > 12 || !o || typeof o !== 'object') return null;
+  if (Array.isArray(o)) {
+    for (const i of o) { const r = findRecipeInObj(i, depth + 1); if (r) return r; }
+    return null;
+  }
+  if (String(o['@type'] || '').includes('Recipe')) return o;
+  if (o['@graph']) { const r = findRecipeInObj(o['@graph'], depth + 1); if (r) return r; }
+  return null;
+}
+
 function extractJsonLdFromHtml(html) {
+  // 1. Standard application/ld+json blocks
   const re = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
   let m;
   while ((m = re.exec(html)) !== null) {
     try {
-      const obj = JSON.parse(m[1].trim());
-      const find = o => {
-        if (!o || typeof o !== 'object') return null;
-        if (Array.isArray(o)) { for (const i of o) { const r = find(i); if (r) return r; } return null; }
-        if (String(o['@type'] || '').includes('Recipe')) return o;
-        if (o['@graph']) return find(o['@graph']);
-        return null;
-      };
-      const recipe = find(obj);
+      const recipe = findRecipeInObj(JSON.parse(m[1].trim()), 0);
+      if (recipe) return recipe;
+    } catch (e) {}
+  }
+  // 2. Next.js __NEXT_DATA__ (REWE, many modern sites)
+  const nd = html.match(/<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
+  if (nd) {
+    try {
+      const recipe = findRecipeInObj(JSON.parse(nd[1].trim()), 0);
+      if (recipe) return recipe;
+    } catch (e) {}
+  }
+  // 3. Any application/json script block containing a Recipe
+  const re2 = /<script[^>]+type=["']application\/json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  while ((m = re2.exec(html)) !== null) {
+    try {
+      const recipe = findRecipeInObj(JSON.parse(m[1].trim()), 0);
       if (recipe) return recipe;
     } catch (e) {}
   }
@@ -1439,8 +1459,13 @@ class AlhMealCard extends HTMLElement {
 
     const parsePaste = root.querySelector('[data-action="parse-paste"]');
     if (parsePaste) parsePaste.addEventListener('click', () => {
-      const html = this._importPasteHtml.trim();
-      if (!html) return;
+      const pasteEl = this.shadowRoot.querySelector('.import-paste-textarea');
+      const html = (pasteEl?.value || this._importPasteHtml || '').trim();
+      if (!html) {
+        this._importResult = { error: 'Kein Quelltext eingefügt. Bitte zuerst den Seitenquelltext einfügen.' };
+        this._render();
+        return;
+      }
       const recipe = extractJsonLdFromHtml(html);
       if (!recipe) {
         this._importResult = { error: 'Kein Rezept im Quelltext gefunden. Stelle sicher, dass du den kompletten Seitenquelltext (Strg+U) kopiert hast.' };
