@@ -392,6 +392,9 @@ class AlhMealCard extends HTMLElement {
     const urlEl     = this.shadowRoot.querySelector('.import__url');
     if (urlEl)       this._recipeForm._importUrl = urlEl.value;
 
+    const imgUrlEl  = this.shadowRoot.querySelector('.form__img-url');
+    if (imgUrlEl && imgUrlEl.value) this._recipeForm.img = imgUrlEl.value;
+
     const planDayEl = this.shadowRoot.querySelector('.plan-form__date');
     if (planDayEl)   this._planForm.dayIso = planDayEl.value;
 
@@ -637,6 +640,9 @@ class AlhMealCard extends HTMLElement {
             <button class="recipe-card__edit icon-btn icon-btn--sm" data-action="edit-recipe" data-recipe-uid="${x(recipe.uid)}" aria-label="Bearbeiten">
               <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
             </button>
+            <button class="recipe-card__del icon-btn icon-btn--sm" data-action="delete-recipe-direct" data-recipe-uid="${x(recipe.uid)}" data-recipe-title="${x(recipe.summary)}" aria-label="Löschen">
+              <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+            </button>
           </div>
         ` : `
           <div class="recipe-card__top">
@@ -644,9 +650,14 @@ class AlhMealCard extends HTMLElement {
               <span class="cat-badge cat-badge--${x(meta.cat)}">${x(catLabel)}</span>
               ${score ? `<span class="nutri-badge" style="background:${nutriColor(score)};color:${nutriTextColor(score)}">${score}</span>` : ''}
             </div>
-            <button class="icon-btn icon-btn--sm" data-action="edit-recipe" data-recipe-uid="${x(recipe.uid)}" aria-label="Bearbeiten">
-              <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-            </button>
+            <div style="display:flex;gap:4px">
+              <button class="icon-btn icon-btn--sm" data-action="delete-recipe-direct" data-recipe-uid="${x(recipe.uid)}" data-recipe-title="${x(recipe.summary)}" aria-label="Löschen">
+                <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+              </button>
+              <button class="icon-btn icon-btn--sm" data-action="edit-recipe" data-recipe-uid="${x(recipe.uid)}" aria-label="Bearbeiten">
+                <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+              </button>
+            </div>
           </div>
         `}
         <div class="recipe-card__body">
@@ -851,6 +862,10 @@ class AlhMealCard extends HTMLElement {
               </div>
             ` : `
               <div class="detail-actions">
+                <button class="btn btn--danger" data-action="delete-recipe-direct" data-recipe-uid="${x(recipe.uid)}" data-recipe-title="${x(recipe.summary)}">
+                  <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                  Löschen
+                </button>
                 <button class="btn btn--ghost" data-action="edit-recipe" data-recipe-uid="${x(recipe.uid)}">
                   <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
                   Bearbeiten
@@ -1013,6 +1028,26 @@ class AlhMealCard extends HTMLElement {
 
         <div class="form__section-label">Notiz (optional)</div>
         <textarea class="form__note" placeholder="Kurze Beschreibung oder Tipps…" rows="2">${x(f.note)}</textarea>
+
+        <div class="form__section-label">Bild</div>
+        ${f.img ? `
+          <div class="img-preview-wrap">
+            <img class="img-preview" src="${x(f.img)}" alt=""
+              onerror="this.closest('.img-preview-wrap').querySelector('.img-preview-error').style.display='block';this.style.display='none'" />
+            <div class="img-preview-error" style="display:none;font-size:12px;color:var(--error-color,#f44336)">Bild konnte nicht geladen werden.</div>
+            <button class="btn btn--ghost btn--sm" data-action="remove-img" style="margin-top:6px">Entfernen</button>
+          </div>
+        ` : ''}
+        <div class="img-input-row">
+          <input class="form__img-url form__input form__input--sm"
+            type="url" placeholder="Bild-URL einfügen…"
+            value="${x(f.img && !f.img.startsWith('data:') ? f.img : '')}" />
+          <label class="btn btn--ghost btn--sm img-upload-label" title="Eigenes Bild hochladen">
+            <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
+            Hochladen
+            <input type="file" accept="image/*" class="img-file-input" style="display:none" />
+          </label>
+        </div>
 
         <div class="form__actions">
           ${isEdit ? `<button class="btn btn--danger" data-action="delete-recipe">Löschen</button>` : ''}
@@ -1335,7 +1370,7 @@ class AlhMealCard extends HTMLElement {
     // Recipe detail overlay — open from recipe cards view
     root.querySelectorAll('[data-action="open-detail"]').forEach(el => {
       el.addEventListener('click', (e) => {
-        if (e.target.closest('[data-action="edit-recipe"],[data-action="plan-recipe"]')) return;
+        if (e.target.closest('[data-action="edit-recipe"],[data-action="plan-recipe"],[data-action="delete-recipe-direct"]')) return;
         this._recipeDetail = el.dataset.recipeUid;
         this._detailPlanUid = null;
         this._detailChanging = false;
@@ -1434,6 +1469,54 @@ class AlhMealCard extends HTMLElement {
         this._recipeDetail = null;
         this._openPlanForm('', el.dataset.recipeUid);
       });
+    });
+
+    // Delete recipe directly (with confirmation)
+    root.querySelectorAll('[data-action="delete-recipe-direct"]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const title = el.dataset.recipeTitle || 'dieses Rezept';
+        if (!confirm(`„${title}" wirklich löschen?`)) return;
+        this._deleteRecipe(el.dataset.recipeUid);
+      });
+    });
+
+    // Image URL input
+    const imgUrlEl = root.querySelector('.form__img-url');
+    if (imgUrlEl) imgUrlEl.addEventListener('input', () => {
+      this._recipeForm.img = imgUrlEl.value.trim();
+      this._render();
+    });
+
+    // Image file upload
+    const imgFileEl = root.querySelector('.img-file-input');
+    if (imgFileEl) imgFileEl.addEventListener('change', () => {
+      const file = imgFileEl.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const raw = new Image();
+        raw.onload = () => {
+          const maxW = 800, maxH = 600;
+          let w = raw.width, h = raw.height;
+          if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+          if (h > maxH) { w = Math.round(w * maxH / h); h = maxH; }
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          canvas.getContext('2d').drawImage(raw, 0, 0, w, h);
+          this._recipeForm.img = canvas.toDataURL('image/jpeg', 0.78);
+          this._render();
+        };
+        raw.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // Remove image
+    const removeImgBtn = root.querySelector('[data-action="remove-img"]');
+    if (removeImgBtn) removeImgBtn.addEventListener('click', () => {
+      this._recipeForm.img = '';
+      this._render();
     });
 
     // Category filter
@@ -1791,8 +1874,9 @@ class AlhMealCard extends HTMLElement {
     this._plan
       .filter(p => parsePlanMeta(p.description).recipe_id === uid)
       .forEach(p => this._svc(this._config.plan_entity, 'remove_item', { item: p.uid }));
-    this._activePanel = null;
-    this._recipeForm  = this._blankRecipeForm();
+    this._activePanel  = null;
+    this._recipeForm   = this._blankRecipeForm();
+    this._recipeDetail = null;
     this._render();
   }
 
@@ -2475,6 +2559,25 @@ class AlhMealCard extends HTMLElement {
         padding: 1px 5px; font-size: 11px;
       }
       .import-paste-textarea { min-height: 80px; font-size: 11px; font-family: monospace; }
+
+      /* ── Image Upload ── */
+      .img-input-row {
+        display: flex; gap: 8px; align-items: center; margin-bottom: 8px;
+      }
+      .img-input-row .form__img-url { flex: 1; }
+      .img-upload-label { cursor: pointer; flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px; }
+      .img-upload-label svg { width: 14px; height: 14px; fill: currentColor; }
+      .img-preview-wrap {
+        display: flex; flex-direction: column; align-items: flex-start;
+        margin-bottom: 8px;
+      }
+      .img-preview {
+        max-width: 100%; max-height: 160px; border-radius: 8px; object-fit: cover;
+        border: 1px solid rgba(128,128,128,0.2);
+      }
+      .recipe-card__del {
+        position: absolute; bottom: 3px; right: 3px;
+      }
 
       /* ── JSON Import ── */
       .json-import__textarea {
