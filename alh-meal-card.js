@@ -1119,6 +1119,8 @@ class AlhMealCard extends HTMLElement {
 
     const recipe = extractJsonLdFromHtml(html);
     console.log('[alh-meal-card] parsePaste recipe found:', !!recipe, recipe?.name);
+    if (recipe) console.log('[alh-meal-card] recipe keys:', Object.keys(recipe).join(', '));
+    if (recipe) console.log('[alh-meal-card] recipe preview:', JSON.stringify(recipe).slice(0, 600));
 
     if (!recipe) {
       this._importResult = { error: 'Kein Rezept im Quelltext gefunden.' };
