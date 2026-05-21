@@ -256,6 +256,10 @@ class AlhMealCard extends HTMLElement {
     this._detailPlanUid   = null; // plan uid if detail opened from week view
     this._detailChanging  = false;
     this._detailChangeSearch = '';
+    this._jsonImportMode  = false;
+    this._jsonImportText  = '';
+    this._jsonImportError = '';
+    this._jsonImportCount = 0;
   }
 
   _blankRecipeForm() {
@@ -399,8 +403,9 @@ class AlhMealCard extends HTMLElement {
         ${this._view === 'woche'   ? this._renderWoche()   : ''}
         ${this._view === 'rezepte' ? this._renderRezepte() : ''}
         ${this._view === 'einkauf' ? this._renderEinkauf() : ''}
-        ${this._activePanel === 'recipe-form' ? this._renderRecipeForm() : ''}
-        ${this._activePanel === 'plan-form'   ? this._renderPlanForm()   : ''}
+        ${this._activePanel === 'recipe-form'  ? this._renderRecipeForm()  : ''}
+        ${this._activePanel === 'plan-form'    ? this._renderPlanForm()    : ''}
+        ${this._activePanel === 'json-import'  ? this._renderJsonImport()  : ''}
       </div>
       ${this._recipeDetail ? this._renderRecipeDetailOverlay() : ''}
     `;
@@ -420,6 +425,9 @@ class AlhMealCard extends HTMLElement {
         </div>
         <div class="header__right">
           ${canAdd ? `
+            <button class="icon-btn" data-action="open-json-import" aria-label="JSON Import" title="Rezepte per JSON importieren">
+              <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
+            </button>
             <button class="add-btn" data-action="open-create-recipe" aria-label="Rezept anlegen">
               <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
             </button>
@@ -1091,6 +1099,66 @@ class AlhMealCard extends HTMLElement {
     `;
   }
 
+  // ─── JSON Import Panel ───────────────────────────────────────────────────────
+
+  _renderJsonImport() {
+    const exampleJson = JSON.stringify([
+      {
+        title: 'Spaghetti Bolognese',
+        cat: 'pasta',
+        score: 'C',
+        srv: 4,
+        note: 'Klassiker mit Hackfleisch-Tomaten-Sauce',
+        img: '',
+        ingredients: [
+          { name: 'Spaghetti', amount: '400', unit: 'g' },
+          { name: 'Rinderhack', amount: '500', unit: 'g' },
+          { name: 'Tomaten (passiert)', amount: '400', unit: 'g' },
+        ],
+      },
+    ], null, 2);
+
+    return `
+      <div class="panel recipe-form">
+        <div class="panel__header">
+          <span>Rezepte per JSON importieren</span>
+          <button class="icon-btn" data-action="cancel-json-import" aria-label="Schließen">
+            <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          </button>
+        </div>
+
+        <p class="import-paste-instructions">
+          Füge ein JSON-Array mit Rezepten ein. Jedes Rezept braucht mindestens <code>title</code>.
+          Erlaubte Kategorien: <code>${CATEGORIES.map(c => c.v).join(', ')}</code>.
+        </p>
+
+        <div class="form__section-label">JSON</div>
+        <textarea class="json-import__textarea" rows="10"
+          placeholder='${x(exampleJson)}'>${x(this._jsonImportText)}</textarea>
+
+        ${this._jsonImportError ? `
+          <div class="import-error">${x(this._jsonImportError)}</div>
+        ` : ''}
+        ${this._jsonImportCount > 0 ? `
+          <div class="import-hint">✓ ${this._jsonImportCount} Rezept${this._jsonImportCount !== 1 ? 'e' : ''} erfolgreich importiert!</div>
+        ` : ''}
+
+        <details class="json-import__example">
+          <summary>Beispiel-Format anzeigen</summary>
+          <pre class="json-import__pre">${x(exampleJson)}</pre>
+        </details>
+
+        <div class="form__actions">
+          <button class="btn btn--ghost" data-action="cancel-json-import">Abbrechen</button>
+          <button class="btn btn--primary" data-action="submit-json-import">
+            <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
+            Importieren
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
   // ─── Paste Handler ───────────────────────────────────────────────────────────
 
   _handleParsePaste() {
@@ -1585,6 +1653,34 @@ class AlhMealCard extends HTMLElement {
       this._planSearch  = '';
       this._render();
     });
+
+    // ── JSON Import events ──
+
+    const openJsonImport = root.querySelector('[data-action="open-json-import"]');
+    if (openJsonImport) openJsonImport.addEventListener('click', () => {
+      this._jsonImportText  = '';
+      this._jsonImportError = '';
+      this._jsonImportCount = 0;
+      this._activePanel     = 'json-import';
+      this._render();
+    });
+
+    const cancelJsonImport = root.querySelector('[data-action="cancel-json-import"]');
+    if (cancelJsonImport) cancelJsonImport.addEventListener('click', () => {
+      this._activePanel     = null;
+      this._jsonImportText  = '';
+      this._jsonImportError = '';
+      this._jsonImportCount = 0;
+      this._render();
+    });
+
+    const jsonTextarea = root.querySelector('.json-import__textarea');
+    if (jsonTextarea) jsonTextarea.addEventListener('input', () => {
+      this._jsonImportText = jsonTextarea.value;
+    });
+
+    const submitJsonImport = root.querySelector('[data-action="submit-json-import"]');
+    if (submitJsonImport) submitJsonImport.addEventListener('click', () => this._submitJsonImport());
   }
 
   _restoreFocus() {
@@ -1697,6 +1793,66 @@ class AlhMealCard extends HTMLElement {
       .forEach(p => this._svc(this._config.plan_entity, 'remove_item', { item: p.uid }));
     this._activePanel = null;
     this._recipeForm  = this._blankRecipeForm();
+    this._render();
+  }
+
+  async _submitJsonImport() {
+    const textareaEl = this.shadowRoot.querySelector('.json-import__textarea');
+    const raw = (textareaEl?.value ?? this._jsonImportText).trim();
+    if (!raw) {
+      this._jsonImportError = 'Bitte JSON einfügen.';
+      this._render();
+      return;
+    }
+
+    let recipes;
+    try {
+      const parsed = JSON.parse(raw);
+      recipes = Array.isArray(parsed) ? parsed : [parsed];
+    } catch (e) {
+      this._jsonImportError = `Ungültiges JSON: ${e.message}`;
+      this._render();
+      return;
+    }
+
+    const validCats = CATEGORIES.map(c => c.v);
+    let count = 0;
+    const errors = [];
+
+    for (const [i, r] of recipes.entries()) {
+      const title = String(r.title ?? '').trim();
+      if (!title) { errors.push(`Eintrag ${i + 1}: "title" fehlt.`); continue; }
+
+      const cat   = validCats.includes(r.cat) ? r.cat : 'sonstiges';
+      const score = 'ABCDE'.includes(String(r.score ?? '').toUpperCase())
+        ? String(r.score).toUpperCase() : '';
+      const srv   = parseInt(r.srv) || 4;
+      const note  = String(r.note ?? '').trim();
+      const img   = String(r.img ?? '').trim();
+
+      const ingredients = Array.isArray(r.ingredients)
+        ? r.ingredients.map(ing => ({
+            name:   String(ing.name ?? '').trim(),
+            amount: String(ing.amount ?? ''),
+            unit:   String(ing.unit ?? 'Stk'),
+          })).filter(ing => ing.name)
+        : [];
+
+      const desc = encodeRecipeMeta({ cat, score, srv, note, ingredients, img });
+      await this._svc(this._config.recipe_entity, 'add_item', { item: title, description: desc });
+      count++;
+    }
+
+    this._jsonImportCount = count;
+    this._jsonImportError = errors.length ? errors.join(' ') : '';
+    this._jsonImportText  = '';
+    if (!errors.length) {
+      setTimeout(() => {
+        this._activePanel     = null;
+        this._jsonImportCount = 0;
+        this._render();
+      }, 2000);
+    }
     this._render();
   }
 
@@ -2319,6 +2475,29 @@ class AlhMealCard extends HTMLElement {
         padding: 1px 5px; font-size: 11px;
       }
       .import-paste-textarea { min-height: 80px; font-size: 11px; font-family: monospace; }
+
+      /* ── JSON Import ── */
+      .json-import__textarea {
+        width: 100%; box-sizing: border-box;
+        background: rgba(128,128,128,0.07); border: 1px solid rgba(128,128,128,0.2);
+        border-radius: 8px; padding: 10px; resize: vertical;
+        font-size: 11px; font-family: monospace; line-height: 1.5;
+        color: var(--primary-text-color,currentColor);
+        min-height: 160px;
+      }
+      .json-import__textarea:focus { outline: none; border-color: var(--primary-color,#0A84FF); }
+      .json-import__example {
+        margin-top: 10px; font-size: 12px;
+        color: var(--secondary-text-color,currentColor); opacity: 0.7;
+      }
+      .json-import__example summary { cursor: pointer; padding: 4px 0; }
+      .json-import__pre {
+        margin: 8px 0 0; padding: 10px;
+        background: rgba(128,128,128,0.08); border-radius: 6px;
+        font-size: 11px; font-family: monospace; line-height: 1.5;
+        overflow-x: auto; white-space: pre;
+        color: var(--primary-text-color,currentColor);
+      }
 
       /* ── Nutri hint ── */
       .nutri-hint {

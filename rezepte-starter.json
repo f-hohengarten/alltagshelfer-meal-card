@@ -1,0 +1,312 @@
+[
+  {
+    "title": "Spaghetti Bolognese",
+    "cat": "pasta",
+    "score": "C",
+    "srv": 4,
+    "note": "Klassiker mit Hackfleisch-Tomaten-Sauce, mindestens 30 Min. köcheln lassen",
+    "img": "",
+    "ingredients": [
+      { "name": "Spaghetti", "amount": "400", "unit": "g" },
+      { "name": "Rinderhack", "amount": "500", "unit": "g" },
+      { "name": "Tomaten (passiert)", "amount": "400", "unit": "g" },
+      { "name": "Zwiebel", "amount": "1", "unit": "Stk" },
+      { "name": "Knoblauch", "amount": "2", "unit": "Zehe" },
+      { "name": "Olivenöl", "amount": "2", "unit": "EL" }
+    ]
+  },
+  {
+    "title": "Hähnchen-Curry mit Reis",
+    "cat": "fleisch",
+    "score": "B",
+    "srv": 4,
+    "note": "Cremig und würzig – passt auch mit Kokosmilch",
+    "img": "",
+    "ingredients": [
+      { "name": "Hähnchenbrust", "amount": "600", "unit": "g" },
+      { "name": "Reis (Basmati)", "amount": "300", "unit": "g" },
+      { "name": "Kokosmilch", "amount": "400", "unit": "ml" },
+      { "name": "Zwiebel", "amount": "1", "unit": "Stk" },
+      { "name": "Curry-Pulver", "amount": "2", "unit": "EL" },
+      { "name": "Knoblauch", "amount": "2", "unit": "Zehe" },
+      { "name": "Ingwer (frisch)", "amount": "1", "unit": "EL" }
+    ]
+  },
+  {
+    "title": "Linseneintopf",
+    "cat": "suppe",
+    "score": "A",
+    "srv": 4,
+    "note": "Sattmacher für kalte Tage, schmeckt am nächsten Tag noch besser",
+    "img": "",
+    "ingredients": [
+      { "name": "Rote Linsen", "amount": "300", "unit": "g" },
+      { "name": "Karotten", "amount": "2", "unit": "Stk" },
+      { "name": "Sellerie", "amount": "2", "unit": "Stk" },
+      { "name": "Zwiebel", "amount": "1", "unit": "Stk" },
+      { "name": "Gemüsebrühe", "amount": "1", "unit": "l" },
+      { "name": "Kreuzkümmel", "amount": "1", "unit": "TL" },
+      { "name": "Tomatenmark", "amount": "2", "unit": "EL" }
+    ]
+  },
+  {
+    "title": "Caesar Salad",
+    "cat": "salat",
+    "score": "B",
+    "srv": 2,
+    "note": "Mit selbstgemachten Croutons und Parmesanspänen",
+    "img": "",
+    "ingredients": [
+      { "name": "Römersalat", "amount": "1", "unit": "Stk" },
+      { "name": "Hähnchenbrust", "amount": "300", "unit": "g" },
+      { "name": "Parmesan", "amount": "50", "unit": "g" },
+      { "name": "Toastbrot", "amount": "2", "unit": "Stk" },
+      { "name": "Caesar Dressing", "amount": "4", "unit": "EL" }
+    ]
+  },
+  {
+    "title": "Gemüse-Frittata",
+    "cat": "vegetarisch",
+    "score": "B",
+    "srv": 3,
+    "note": "Resteverwertung – jedes Gemüse funktioniert",
+    "img": "",
+    "ingredients": [
+      { "name": "Eier", "amount": "6", "unit": "Stk" },
+      { "name": "Zucchini", "amount": "1", "unit": "Stk" },
+      { "name": "Paprika", "amount": "1", "unit": "Stk" },
+      { "name": "Feta", "amount": "100", "unit": "g" },
+      { "name": "Olivenöl", "amount": "2", "unit": "EL" }
+    ]
+  },
+  {
+    "title": "Lachs mit Brokkoli und Kartoffeln",
+    "cat": "fleisch",
+    "score": "A",
+    "srv": 2,
+    "note": "Im Ofen gegart – einfach und gesund",
+    "img": "",
+    "ingredients": [
+      { "name": "Lachsfilet", "amount": "400", "unit": "g" },
+      { "name": "Brokkoli", "amount": "500", "unit": "g" },
+      { "name": "Kartoffeln", "amount": "600", "unit": "g" },
+      { "name": "Zitrone", "amount": "1", "unit": "Stk" },
+      { "name": "Olivenöl", "amount": "3", "unit": "EL" }
+    ]
+  },
+  {
+    "title": "Tomatensuppe mit Croûtons",
+    "cat": "suppe",
+    "score": "B",
+    "srv": 4,
+    "note": "Frisch oder aus passierten Tomaten – beides lecker",
+    "img": "",
+    "ingredients": [
+      { "name": "Tomaten (passiert)", "amount": "800", "unit": "g" },
+      { "name": "Zwiebel", "amount": "1", "unit": "Stk" },
+      { "name": "Knoblauch", "amount": "2", "unit": "Zehe" },
+      { "name": "Sahne", "amount": "100", "unit": "ml" },
+      { "name": "Gemüsebrühe", "amount": "300", "unit": "ml" },
+      { "name": "Baguette", "amount": "100", "unit": "g" }
+    ]
+  },
+  {
+    "title": "Overnight Oats",
+    "cat": "snack",
+    "score": "A",
+    "srv": 1,
+    "note": "Abends vorbereiten, morgens genießen",
+    "img": "",
+    "ingredients": [
+      { "name": "Haferflocken", "amount": "80", "unit": "g" },
+      { "name": "Milch (oder Hafermilch)", "amount": "200", "unit": "ml" },
+      { "name": "Joghurt", "amount": "100", "unit": "g" },
+      { "name": "Banane", "amount": "1", "unit": "Stk" },
+      { "name": "Beeren (tiefgekühlt)", "amount": "100", "unit": "g" }
+    ]
+  },
+  {
+    "title": "Shakshuka",
+    "cat": "vegetarisch",
+    "score": "A",
+    "srv": 2,
+    "note": "Eier in würziger Tomaten-Paprika-Sauce",
+    "img": "",
+    "ingredients": [
+      { "name": "Eier", "amount": "4", "unit": "Stk" },
+      { "name": "Tomaten (passiert)", "amount": "400", "unit": "g" },
+      { "name": "Paprika (rot)", "amount": "2", "unit": "Stk" },
+      { "name": "Zwiebel", "amount": "1", "unit": "Stk" },
+      { "name": "Kreuzkümmel", "amount": "1", "unit": "TL" },
+      { "name": "Paprikapulver", "amount": "1", "unit": "TL" },
+      { "name": "Olivenöl", "amount": "2", "unit": "EL" }
+    ]
+  },
+  {
+    "title": "Pasta Pesto Genovese",
+    "cat": "pasta",
+    "score": "B",
+    "srv": 2,
+    "note": "Fertig in 15 Minuten – Pesto aus dem Glas oder selbst gemacht",
+    "img": "",
+    "ingredients": [
+      { "name": "Pasta (Trofie oder Spaghetti)", "amount": "250", "unit": "g" },
+      { "name": "Pesto Genovese", "amount": "4", "unit": "EL" },
+      { "name": "Parmesan", "amount": "30", "unit": "g" },
+      { "name": "Kirschtomaten", "amount": "150", "unit": "g" }
+    ]
+  },
+  {
+    "title": "Rindersteak mit Ofenkartoffeln",
+    "cat": "fleisch",
+    "score": "C",
+    "srv": 2,
+    "note": "Steak 2 Min. pro Seite braten, dann ruhen lassen",
+    "img": "",
+    "ingredients": [
+      { "name": "Rindersteak (z.B. Ribeye)", "amount": "400", "unit": "g" },
+      { "name": "Kartoffeln", "amount": "600", "unit": "g" },
+      { "name": "Rosmarin", "amount": "2", "unit": "Bund" },
+      { "name": "Olivenöl", "amount": "3", "unit": "EL" },
+      { "name": "Butter", "amount": "20", "unit": "g" }
+    ]
+  },
+  {
+    "title": "Pancakes",
+    "cat": "snack",
+    "score": "C",
+    "srv": 2,
+    "note": "Fluffig durch das geschlagene Eiweiß – beliebt bei Kindern",
+    "img": "",
+    "ingredients": [
+      { "name": "Mehl", "amount": "150", "unit": "g" },
+      { "name": "Milch", "amount": "200", "unit": "ml" },
+      { "name": "Eier", "amount": "2", "unit": "Stk" },
+      { "name": "Backpulver", "amount": "1", "unit": "TL" },
+      { "name": "Butter", "amount": "20", "unit": "g" },
+      { "name": "Zucker", "amount": "1", "unit": "EL" }
+    ]
+  },
+  {
+    "title": "Kürbissuppe",
+    "cat": "suppe",
+    "score": "A",
+    "srv": 4,
+    "note": "Hokkaido-Kürbis muss nicht geschält werden",
+    "img": "",
+    "ingredients": [
+      { "name": "Hokkaido-Kürbis", "amount": "1", "unit": "Stk" },
+      { "name": "Kokosmilch", "amount": "200", "unit": "ml" },
+      { "name": "Gemüsebrühe", "amount": "600", "unit": "ml" },
+      { "name": "Ingwer (frisch)", "amount": "1", "unit": "EL" },
+      { "name": "Zwiebel", "amount": "1", "unit": "Stk" }
+    ]
+  },
+  {
+    "title": "Hackfleisch-Pfanne mit Zucchini",
+    "cat": "fleisch",
+    "score": "C",
+    "srv": 4,
+    "note": "Schnelle Alltagspfanne, gut zu Reis oder Nudeln",
+    "img": "",
+    "ingredients": [
+      { "name": "Hackfleisch (gemischt)", "amount": "500", "unit": "g" },
+      { "name": "Zucchini", "amount": "2", "unit": "Stk" },
+      { "name": "Zwiebel", "amount": "1", "unit": "Stk" },
+      { "name": "Tomaten (passiert)", "amount": "300", "unit": "g" },
+      { "name": "Paprikapulver", "amount": "1", "unit": "TL" }
+    ]
+  },
+  {
+    "title": "Avocado Toast",
+    "cat": "snack",
+    "score": "A",
+    "srv": 1,
+    "note": "Topping nach Belieben: Ei, Radieschen, Chiliflocken",
+    "img": "",
+    "ingredients": [
+      { "name": "Avocado", "amount": "1", "unit": "Stk" },
+      { "name": "Vollkornbrot", "amount": "2", "unit": "Stk" },
+      { "name": "Zitronensaft", "amount": "1", "unit": "EL" },
+      { "name": "Chiliflocken", "amount": "1", "unit": "Prise" }
+    ]
+  },
+  {
+    "title": "Schokoladenmousse",
+    "cat": "dessert",
+    "score": "D",
+    "srv": 4,
+    "note": "Kühlung mindestens 2 Stunden im Kühlschrank",
+    "img": "",
+    "ingredients": [
+      { "name": "Zartbitterschokolade", "amount": "200", "unit": "g" },
+      { "name": "Schlagsahne", "amount": "300", "unit": "ml" },
+      { "name": "Eier", "amount": "3", "unit": "Stk" },
+      { "name": "Zucker", "amount": "30", "unit": "g" }
+    ]
+  },
+  {
+    "title": "Griechischer Salat",
+    "cat": "salat",
+    "score": "A",
+    "srv": 2,
+    "note": "Klassisch ohne Eisbergsalat, nur Tomaten und Gurke",
+    "img": "",
+    "ingredients": [
+      { "name": "Tomaten", "amount": "3", "unit": "Stk" },
+      { "name": "Gurke", "amount": "1", "unit": "Stk" },
+      { "name": "Feta", "amount": "150", "unit": "g" },
+      { "name": "Oliven (schwarz)", "amount": "50", "unit": "g" },
+      { "name": "Rote Zwiebel", "amount": "1", "unit": "Stk" },
+      { "name": "Olivenöl", "amount": "3", "unit": "EL" },
+      { "name": "Oregano", "amount": "1", "unit": "TL" }
+    ]
+  },
+  {
+    "title": "Gebratener Tofu mit Gemüse",
+    "cat": "vegetarisch",
+    "score": "A",
+    "srv": 2,
+    "note": "Tofu vorher pressen, dann knusprig braten",
+    "img": "",
+    "ingredients": [
+      { "name": "Tofu (fest)", "amount": "400", "unit": "g" },
+      { "name": "Brokkoli", "amount": "300", "unit": "g" },
+      { "name": "Paprika", "amount": "1", "unit": "Stk" },
+      { "name": "Sojasoße", "amount": "3", "unit": "EL" },
+      { "name": "Sesamöl", "amount": "1", "unit": "EL" },
+      { "name": "Knoblauch", "amount": "2", "unit": "Zehe" }
+    ]
+  },
+  {
+    "title": "Kartoffelsuppe",
+    "cat": "suppe",
+    "score": "B",
+    "srv": 4,
+    "note": "Mit Würstchen oder Speck nach Belieben verfeinern",
+    "img": "",
+    "ingredients": [
+      { "name": "Kartoffeln", "amount": "800", "unit": "g" },
+      { "name": "Gemüsebrühe", "amount": "1", "unit": "l" },
+      { "name": "Karotten", "amount": "2", "unit": "Stk" },
+      { "name": "Lauch", "amount": "1", "unit": "Stk" },
+      { "name": "Sahne", "amount": "100", "unit": "ml" },
+      { "name": "Majoran", "amount": "1", "unit": "TL" }
+    ]
+  },
+  {
+    "title": "Pizza Margherita",
+    "cat": "sonstiges",
+    "score": "C",
+    "srv": 2,
+    "note": "Teig 1 Stunde gehen lassen für beste Ergebnisse",
+    "img": "",
+    "ingredients": [
+      { "name": "Pizzateig", "amount": "400", "unit": "g" },
+      { "name": "Tomatensoße", "amount": "150", "unit": "g" },
+      { "name": "Mozzarella", "amount": "200", "unit": "g" },
+      { "name": "Basilikum", "amount": "1", "unit": "Bund" },
+      { "name": "Olivenöl", "amount": "2", "unit": "EL" }
+    ]
+  }
+]
