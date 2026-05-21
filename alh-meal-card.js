@@ -37,6 +37,39 @@ const DAY_NAMES_SHORT = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
 const DAY_NAMES_LONG  = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
 const MONTH_NAMES     = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
 
+// ─── Client-side recipe extraction (fallback for bot-protected sites) ─────────
+
+function extractJsonLdFromHtml(html) {
+  const re = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    try {
+      const obj = JSON.parse(m[1].trim());
+      const find = o => {
+        if (!o || typeof o !== 'object') return null;
+        if (Array.isArray(o)) { for (const i of o) { const r = find(i); if (r) return r; } return null; }
+        if (String(o['@type'] || '').includes('Recipe')) return o;
+        if (o['@graph']) return find(o['@graph']);
+        return null;
+      };
+      const recipe = find(obj);
+      if (recipe) return recipe;
+    } catch (e) {}
+  }
+  return null;
+}
+
+function parseIngredientJs(raw) {
+  raw = String(raw || '').replace(/<[^>]+>/g, '').trim();
+  const unitMap = { stk:'Stk',stück:'Stk',zehe:'Zehe',bund:'Bund',pkg:'Pkg',prise:'Prise',el:'EL',tl:'TL',tbsp:'EL',tsp:'TL',cup:'Stk',cups:'Stk' };
+  const units = 'g|kg|ml|l|L|EL|TL|Stk|Stück|Zehe|Bund|Pkg|Prise|cl|dl|oz|lb|cup|cups|tbsp|tsp';
+  let m = raw.match(new RegExp(`^([\\d,./½¼¾⅓⅔]+)\\s*(${units})\\.?\\s+(.+)$`, 'i'));
+  if (m) return { name: m[3].trim(), amount: m[1], unit: unitMap[m[2].toLowerCase()] || m[2] };
+  m = raw.match(/^([\d,./½¼¾⅓⅔]+)\s+(.+)$/);
+  if (m) return { name: m[2].trim(), amount: m[1], unit: 'Stk' };
+  return { name: raw, amount: '', unit: 'Stk' };
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function x(s) {
@@ -190,6 +223,7 @@ class AlhMealCard extends HTMLElement {
     this._nutriSuggestion = null;
     this._importLoading   = false;
     this._importResult    = null;
+    this._importPasteMode = false;
     this._planSearch      = '';
     this._dragPlanUid     = null;
     this._recipeDetail    = null; // uid of recipe shown in detail overlay
@@ -864,7 +898,30 @@ class AlhMealCard extends HTMLElement {
               ${this._importLoading ? '…' : 'Importieren'}
             </button>
           </div>
-          ${this._importResult?.error ? `<div class="import-error">${x(this._importResult.error)}</div>` : ''}
+          ${this._importResult?.error ? `
+            <div class="import-error">${x(this._importResult.error)}</div>
+            <div class="import-paste-hint">
+              Diese Website lässt keinen automatischen Import zu.
+              <button class="btn btn--ghost btn--sm" data-action="toggle-paste-mode">
+                ${this._importPasteMode ? 'Abbrechen' : 'Quelltext einfügen ▸'}
+              </button>
+            </div>
+            ${this._importPasteMode ? `
+              <div class="import-paste-wrap">
+                <p class="import-paste-instructions">
+                  1. Öffne die Rezept-URL in Chrome/Safari &nbsp;→&nbsp;
+                  2. <strong>Rechtsklick → Seitenquelltext anzeigen</strong> (oder <code>Strg+U</code>) &nbsp;→&nbsp;
+                  3. Alles kopieren (<code>Strg+A</code>, <code>Strg+C</code>) &nbsp;→&nbsp;
+                  4. Hier einfügen:
+                </p>
+                <textarea class="import-paste-textarea form__textarea" rows="4"
+                  placeholder="&lt;!DOCTYPE html&gt;…"></textarea>
+                <button class="btn btn--primary btn--sm" data-action="parse-paste" style="margin-top:6px">
+                  Rezept aus Quelltext lesen
+                </button>
+              </div>
+            ` : ''}
+          ` : ''}
           ${this._importResult?.title ? `<div class="import-hint">✓ Importiert: ${x(this._importResult.title)}</div>` : ''}
           <div class="panel__divider"><span>oder manuell</span></div>
         ` : ''}
@@ -1366,6 +1423,44 @@ class AlhMealCard extends HTMLElement {
     const importBtn = root.querySelector('[data-action="import-url"]');
     if (importBtn) importBtn.addEventListener('click', () => this._importUrl());
 
+    const togglePaste = root.querySelector('[data-action="toggle-paste-mode"]');
+    if (togglePaste) togglePaste.addEventListener('click', () => {
+      this._importPasteMode = !this._importPasteMode;
+      this._render();
+    });
+
+    const parsePaste = root.querySelector('[data-action="parse-paste"]');
+    if (parsePaste) parsePaste.addEventListener('click', () => {
+      const ta = this.shadowRoot.querySelector('.import-paste-textarea');
+      const html = ta?.value?.trim();
+      if (!html) return;
+      const recipe = extractJsonLdFromHtml(html);
+      if (!recipe) {
+        this._importResult = { error: 'Kein Rezept im Quelltext gefunden.' };
+        this._importPasteMode = false;
+        this._render();
+        return;
+      }
+      const title = String(recipe.name || '').replace(/<[^>]+>/g, '').trim();
+      if (title) this._recipeForm.title = title;
+      const rawIngs = recipe.recipeIngredient || [];
+      if (rawIngs.length) {
+        this._recipeForm.ingredients = rawIngs
+          .map(i => parseIngredientJs(String(i)))
+          .filter(i => i.name);
+      }
+      const srvRaw = Array.isArray(recipe.recipeYield) ? recipe.recipeYield[0] : recipe.recipeYield;
+      const srvM = String(srvRaw || '').match(/\d+/);
+      if (srvM) this._recipeForm.srv = parseInt(srvM[0]) || 4;
+      let img = recipe.image || '';
+      if (Array.isArray(img)) img = img[0] || '';
+      if (img && typeof img === 'object') img = img.url || '';
+      if (img) this._recipeForm.img = String(img).split('?')[0];
+      this._importResult = { title };
+      this._importPasteMode = false;
+      this._render();
+    });
+
     const titleInput = root.querySelector('.form__title-input');
     if (titleInput) titleInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); this._submitRecipe(); }
@@ -1449,9 +1544,10 @@ class AlhMealCard extends HTMLElement {
   // ─── Actions ─────────────────────────────────────────────────────────────────
 
   _openCreateRecipe() {
-    this._recipeForm  = this._blankRecipeForm();
-    this._importResult = null;
-    this._activePanel = 'recipe-form';
+    this._recipeForm    = this._blankRecipeForm();
+    this._importResult  = null;
+    this._importPasteMode = false;
+    this._activePanel   = 'recipe-form';
     this._render();
   }
 
@@ -2141,6 +2237,25 @@ class AlhMealCard extends HTMLElement {
       .import-error {
         font-size: 12px; color: var(--error-color, #f44336); padding: 4px 2px; margin-bottom: 2px;
       }
+      .import-paste-hint {
+        display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+        font-size: 12px; color: var(--secondary-text-color, currentColor); opacity: 0.75;
+        margin-bottom: 4px;
+      }
+      .import-paste-wrap {
+        background: rgba(128,128,128,0.06); border-radius: 10px;
+        padding: 10px 12px; margin-bottom: 4px;
+        display: flex; flex-direction: column; gap: 6px;
+      }
+      .import-paste-instructions {
+        font-size: 12px; line-height: 1.6; margin: 0;
+        color: var(--secondary-text-color, currentColor); opacity: 0.8;
+      }
+      .import-paste-instructions code {
+        background: rgba(128,128,128,0.15); border-radius: 4px;
+        padding: 1px 5px; font-size: 11px;
+      }
+      .import-paste-textarea { min-height: 80px; font-size: 11px; font-family: monospace; }
 
       /* ── Nutri hint ── */
       .nutri-hint {
