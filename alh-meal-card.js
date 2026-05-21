@@ -46,37 +46,34 @@ function findRecipeInObj(o, depth) {
     return null;
   }
   if (String(o['@type'] || '').includes('Recipe')) return o;
-  if (o['@graph']) { const r = findRecipeInObj(o['@graph'], depth + 1); if (r) return r; }
+  // Recurse into common wrapper properties (e.g. REWE uses Webpage > mainEntity > Recipe)
+  for (const key of ['@graph', 'mainEntity', 'mainEntityOfPage']) {
+    if (o[key]) { const r = findRecipeInObj(o[key], depth + 1); if (r) return r; }
+  }
   return null;
 }
 
 function extractJsonLdFromHtml(html) {
+  const candidates = [];
+  let m;
   // 1. Standard application/ld+json blocks
   const re = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
-  let m;
   while ((m = re.exec(html)) !== null) {
-    try {
-      const recipe = findRecipeInObj(JSON.parse(m[1].trim()), 0);
-      if (recipe) return recipe;
-    } catch (e) {}
+    try { const r = findRecipeInObj(JSON.parse(m[1].trim()), 0); if (r) candidates.push(r); } catch (e) {}
   }
-  // 2. Next.js __NEXT_DATA__ (REWE, many modern sites)
+  // 2. Next.js __NEXT_DATA__
   const nd = html.match(/<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
   if (nd) {
-    try {
-      const recipe = findRecipeInObj(JSON.parse(nd[1].trim()), 0);
-      if (recipe) return recipe;
-    } catch (e) {}
+    try { const r = findRecipeInObj(JSON.parse(nd[1].trim()), 0); if (r) candidates.push(r); } catch (e) {}
   }
-  // 3. Any application/json script block containing a Recipe
+  // 3. application/json blocks
   const re2 = /<script[^>]+type=["']application\/json["'][^>]*>([\s\S]*?)<\/script>/gi;
   while ((m = re2.exec(html)) !== null) {
-    try {
-      const recipe = findRecipeInObj(JSON.parse(m[1].trim()), 0);
-      if (recipe) return recipe;
-    } catch (e) {}
+    try { const r = findRecipeInObj(JSON.parse(m[1].trim()), 0); if (r) candidates.push(r); } catch (e) {}
   }
-  return null;
+  if (!candidates.length) return null;
+  // Prefer the most complete candidate (has both name and ingredients)
+  return candidates.find(r => r.name && r.recipeIngredient?.length) || candidates[0];
 }
 
 function parseIngredientJs(raw) {
