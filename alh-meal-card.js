@@ -1792,7 +1792,7 @@ class AlhMealCard extends HTMLElement {
 
   _css() {
     return `
-      :host { display: block; }
+      :host { display: block; height: 100%; }
 
       .card {
         background: var(--ha-card-background, var(--card-background-color, #1c1c1e));
@@ -1801,6 +1801,7 @@ class AlhMealCard extends HTMLElement {
         box-shadow: var(--ha-card-box-shadow, 0 12px 20px rgba(0,0,0,0.28));
         overflow: hidden;
         font-family: var(--primary-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+        height: 100%; display: flex; flex-direction: column;
       }
 
       /* ── Header ── */
@@ -1907,7 +1908,7 @@ class AlhMealCard extends HTMLElement {
       .cat-badge--sonstiges   { background: rgba(128,128,128,0.12);  color: var(--secondary-text-color,currentColor); }
 
       /* ── Woche View ── */
-      .woche { padding: 0 12px 12px; }
+      .woche { padding: 0 12px 12px; flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
       .woche__nav {
         display: flex; align-items: center; justify-content: space-between;
         padding: 2px 0 12px; flex-wrap: wrap; gap: 8px;
@@ -1918,8 +1919,10 @@ class AlhMealCard extends HTMLElement {
       .week-table {
         display: grid;
         grid-template-columns: 72px repeat(7, minmax(0, 1fr));
+        grid-template-rows: auto repeat(3, 1fr);
         gap: 3px;
-        overflow-x: auto;
+        overflow: auto;
+        flex: 1; min-height: 0;
       }
 
       .week-table__corner { /* empty top-left cell */ }
@@ -1953,7 +1956,7 @@ class AlhMealCard extends HTMLElement {
       .slot-text { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--secondary-text-color,currentColor); opacity: 0.55; text-align: center; }
 
       .week-cell {
-        min-height: 90px; padding: 4px; border-radius: 8px;
+        min-height: 60px; padding: 4px; border-radius: 8px;
         background: rgba(128,128,128,0.04);
         border: 2px solid transparent;
         display: flex; flex-direction: column; gap: 4px;
