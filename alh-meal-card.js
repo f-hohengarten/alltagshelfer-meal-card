@@ -120,15 +120,19 @@ function fmtDate(isoStr) {
 
 function parseRecipeMeta(desc) {
   const str = String(desc ?? '');
-  const mHead = str.match(/^\[ALH ([^\]]*)\]/);
+  // Extract data URL stored separately (avoids ; conflict in header)
+  const imgBlockMatch = str.match(/\n\[IMG\](data:[^\n]*)/);
+  const cleanStr = imgBlockMatch ? str.slice(0, str.lastIndexOf('\n[IMG]')) : str;
+  const mHead = cleanStr.match(/^\[ALH ([^\]]*)\]/);
   const meta  = { cat: 'sonstiges', score: '', srv: 4, note: '', img: '', ingredients: [] };
+  if (imgBlockMatch) meta.img = imgBlockMatch[1];
   if (mHead) {
     mHead[1].split(';').forEach(p => {
       const i = p.indexOf(':');
       if (i > 0) meta[p.slice(0, i).trim()] = p.slice(i + 1).trim();
     });
     meta.srv = parseInt(meta.srv) || 4;
-    const rest = str.slice(mHead[0].length).trim();
+    const rest = cleanStr.slice(mHead[0].length).trim();
     const pipeIdx = rest.indexOf('|');
     if (pipeIdx >= 0) {
       meta.note = rest.slice(0, pipeIdx).trim();
@@ -141,7 +145,7 @@ function parseRecipeMeta(desc) {
       meta.note = rest;
     }
   } else {
-    meta.note = str;
+    meta.note = cleanStr;
   }
   return meta;
 }
@@ -149,16 +153,21 @@ function parseRecipeMeta(desc) {
 function encodeRecipeMeta({ cat, score, srv, note, ingredients, img }) {
   const parts = [`cat:${cat || 'sonstiges'}`, `srv:${srv || 4}`];
   if (score) parts.push(`score:${score}`);
-  if (img) parts.push(`img:${img}`);
+  // Only HTTP/HTTPS URLs go into the header; data URLs use the [IMG] block below
+  if (img && !img.startsWith('data:')) parts.push(`img:${img}`);
   const head = `[ALH ${parts.join(';')}]`;
   const ingStr = (ingredients || [])
     .filter(i => i.name)
     .map(i => `${i.name}:${i.amount || ''}:${i.unit || ''}`)
     .join(',');
   const noteStr = (note || '').trim();
-  if (ingStr) return `${head} ${noteStr}|${ingStr}`;
-  if (noteStr) return `${head} ${noteStr}`;
-  return head;
+  let result;
+  if (ingStr) result = `${head} ${noteStr}|${ingStr}`;
+  else if (noteStr) result = `${head} ${noteStr}`;
+  else result = head;
+  // Append data URL as separate block to avoid ; conflicts in header parsing
+  if (img && img.startsWith('data:')) result += `\n[IMG]${img}`;
+  return result;
 }
 
 function parsePlanMeta(desc) {
