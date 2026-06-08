@@ -415,11 +415,11 @@ class AlhMealCard extends HTMLElement {
         ${this._view === 'woche'   ? this._renderWoche()   : ''}
         ${this._view === 'rezepte' ? this._renderRezepte() : ''}
         ${this._view === 'einkauf' ? this._renderEinkauf() : ''}
-        ${this._activePanel === 'recipe-form'  ? this._renderRecipeForm()  : ''}
-        ${this._activePanel === 'plan-form'    ? this._renderPlanForm()    : ''}
-        ${this._activePanel === 'json-import'  ? this._renderJsonImport()  : ''}
       </div>
       ${this._recipeDetail ? this._renderRecipeDetailOverlay() : ''}
+      ${this._activePanel === 'recipe-form'  ? this._renderRecipeForm()  : ''}
+      ${this._activePanel === 'plan-form'    ? this._renderPlanForm()    : ''}
+      ${this._activePanel === 'json-import'  ? this._renderJsonImport()  : ''}
     `;
     this._bind();
     this._restoreFocus();
@@ -871,10 +871,17 @@ class AlhMealCard extends HTMLElement {
               </div>
             ` : `
               <div class="detail-actions">
-                <button class="btn btn--danger" data-action="delete-recipe-direct" data-recipe-uid="${x(recipe.uid)}" data-recipe-title="${x(recipe.summary)}">
-                  <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-                  Löschen
-                </button>
+                ${this._detailPlanUid ? `
+                  <button class="btn btn--danger" data-action="remove-from-plan" style="margin-right:auto">
+                    <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                    Aus Planung entfernen
+                  </button>
+                ` : `
+                  <button class="btn btn--danger" data-action="delete-recipe-direct" data-recipe-uid="${x(recipe.uid)}" data-recipe-title="${x(recipe.summary)}">
+                    <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                    Löschen
+                  </button>
+                `}
                 <button class="btn btn--ghost" data-action="edit-recipe" data-recipe-uid="${x(recipe.uid)}">
                   <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
                   Bearbeiten
@@ -936,7 +943,8 @@ class AlhMealCard extends HTMLElement {
     this._nutriSuggestion = suggestNutriScore(f.ingredients);
 
     return `
-      <div class="panel recipe-form">
+      <div class="form-overlay" data-close-panel="recipe-form">
+      <div class="form-modal">
         <div class="panel__header">
           <span>${isEdit ? 'Rezept bearbeiten' : 'Neues Rezept'}</span>
           <button class="icon-btn" data-action="cancel-recipe" aria-label="Schließen">
@@ -1064,6 +1072,7 @@ class AlhMealCard extends HTMLElement {
           <button class="btn btn--primary" data-action="submit-recipe">${isEdit ? 'Speichern' : 'Anlegen'}</button>
         </div>
       </div>
+      </div>
     `;
   }
 
@@ -1073,7 +1082,8 @@ class AlhMealCard extends HTMLElement {
     const f       = this._planForm;
     const recipes = this._recipes.filter(r => r.status !== 'completed');
     return `
-      <div class="panel plan-form">
+      <div class="form-overlay" data-close-panel="plan-form">
+      <div class="form-modal">
         <div class="panel__header">
           <span>Mahlzeit einplanen</span>
           <button class="icon-btn" data-action="cancel-plan" aria-label="Schließen">
@@ -1140,6 +1150,7 @@ class AlhMealCard extends HTMLElement {
           <button class="btn btn--primary" data-action="submit-plan">Einplanen</button>
         </div>
       </div>
+      </div>
     `;
   }
 
@@ -1163,7 +1174,8 @@ class AlhMealCard extends HTMLElement {
     ], null, 2);
 
     return `
-      <div class="panel recipe-form">
+      <div class="form-overlay" data-close-panel="json-import">
+      <div class="form-modal">
         <div class="panel__header">
           <span>Rezepte per JSON importieren</span>
           <button class="icon-btn" data-action="cancel-json-import" aria-label="Schließen">
@@ -1199,6 +1211,7 @@ class AlhMealCard extends HTMLElement {
             Importieren
           </button>
         </div>
+      </div>
       </div>
     `;
   }
@@ -1413,6 +1426,34 @@ class AlhMealCard extends HTMLElement {
       });
     });
 
+    // Remove plan entry from calendar detail view
+    const removeFromPlanBtn = root.querySelector('[data-action="remove-from-plan"]');
+    if (removeFromPlanBtn) removeFromPlanBtn.addEventListener('click', () => {
+      const uid = this._detailPlanUid;
+      this._recipeDetail = null;
+      this._detailPlanUid = null;
+      this._detailChanging = false;
+      if (uid) {
+        this._svc(this._config.plan_entity, 'remove_item', { item: uid });
+        this._shopPlanUids.delete(uid);
+        delete this._shopServings[uid];
+      }
+      this._render();
+    });
+
+    // Form overlay backdrop click-to-close
+    root.querySelectorAll('.form-overlay').forEach(overlay => {
+      overlay.addEventListener('click', (e) => {
+        if (e.target !== overlay) return;
+        const panel = overlay.dataset.closePanel;
+        this._activePanel = null;
+        if (panel === 'recipe-form') { this._recipeForm = this._blankRecipeForm(); this._importResult = null; }
+        else if (panel === 'plan-form') { this._planForm = this._blankPlanForm(); this._planSearch = ''; }
+        else if (panel === 'json-import') { this._jsonImportText = ''; this._jsonImportError = ''; this._jsonImportCount = 0; }
+        this._render();
+      });
+    });
+
     // Toggle change-recipe mode in detail overlay
     const toggleChange = root.querySelector('[data-action="toggle-detail-change"]');
     if (toggleChange) toggleChange.addEventListener('click', () => {
@@ -1546,6 +1587,10 @@ class AlhMealCard extends HTMLElement {
       searchEl.addEventListener('input', () => {
         this._searchQuery = searchEl.value;
         this._render();
+        setTimeout(() => {
+          const el = this.shadowRoot.querySelector('.search__input');
+          if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+        }, 0);
       });
     }
 
@@ -2079,7 +2124,7 @@ class AlhMealCard extends HTMLElement {
         display: flex; align-items: center; justify-content: center; padding: 0;
         transition: background 0.15s; flex-shrink: 0;
       }
-      .icon-btn svg { width: 16px; height: 16px; fill: var(--secondary-text-color, currentColor); opacity: 0.5; }
+      .icon-btn svg { width: 16px; height: 16px; fill: var(--secondary-text-color, currentColor); opacity: 0.7; }
       .icon-btn:hover { background: rgba(var(--rgb-primary-color,10,132,255), 0.12); }
       .icon-btn:hover svg { opacity: 0.85; }
       .icon-btn--sm { width: 24px; height: 24px; border-radius: 6px; }
@@ -2152,9 +2197,9 @@ class AlhMealCard extends HTMLElement {
       .cat-badge--fleisch     { background: rgba(59,38,5,0.8);   color: #FF9F0A; }
       .cat-badge--vegetarisch { background: rgba(9,64,17,0.8);    color: #32D74B; }
       .cat-badge--suppe       { background: rgba(9,76,53,0.8);  color: #6adc91; }
-      .cat-badge--snack       { background: rgba(100, 85, 10, 0.8);   color: #b39600; }
+      .cat-badge--snack       { background: rgba(80, 68, 8, 0.85);    color: #e6c400; }
       .cat-badge--dessert     { background: rgba(52, 12, 72, 0.8);   color: #BF5AF2; }
-      .cat-badge--sonstiges   { background: rgba(53, 53, 53, 0.8);  color: var(--secondary-text-color,currentColor); }
+      .cat-badge--sonstiges   { background: rgba(60, 60, 60, 0.85);  color: #c8c8c8; }
 
       /* ── Woche View ── */
       .woche { padding: 0 12px 12px; flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
@@ -2188,7 +2233,7 @@ class AlhMealCard extends HTMLElement {
         border-color: var(--primary-color,#0A84FF);
       }
       .week-table__day-header--weekend { background: rgba(128,128,128,0.07); }
-      .wth-name { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--secondary-text-color,currentColor); opacity: 0.6; }
+      .wth-name { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--secondary-text-color,currentColor); opacity: 0.75; }
       .wth-num { font-size: 16px; font-weight: 600; color: var(--primary-text-color,currentColor); line-height: 1; }
       .wth-num--today {
         background: var(--primary-color,#0A84FF); color: #fff;
@@ -2202,7 +2247,7 @@ class AlhMealCard extends HTMLElement {
         padding: 10px 4px 4px; gap: 3px;
       }
       .slot-icon { font-size: 16px; }
-      .slot-text { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--secondary-text-color,currentColor); opacity: 0.55; text-align: center; }
+      .slot-text { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--secondary-text-color,currentColor); opacity: 0.7; text-align: center; }
 
       .week-cell {
         min-height: 60px; padding: 4px; border-radius: 8px;
@@ -2434,12 +2479,27 @@ class AlhMealCard extends HTMLElement {
       }
       .shop-success svg { width: 18px; height: 18px; fill: #32D74B; }
 
-      /* ── Panel (shared by recipe-form + plan-form) ── */
-      .panel {
-        border-top: 1px solid rgba(128,128,128,0.12);
-        padding: 14px 14px 16px;
-        background: rgba(128,128,128,0.02);
+      /* ── Form Modal Overlay ── */
+      .form-overlay {
+        position: fixed; inset: 0; z-index: 9999;
+        background: rgba(0,0,0,0.72); backdrop-filter: blur(6px);
+        display: flex; align-items: flex-end;
+        animation: fadeIn 0.18s ease;
       }
+      .form-modal {
+        background: var(--ha-card-background, #1c1c1e);
+        border-radius: 20px 20px 0 0; overflow-y: auto;
+        width: 100%; max-height: 88vh;
+        box-shadow: 0 -8px 40px rgba(0,0,0,0.5);
+        animation: slideUp 0.22s ease;
+        padding: 14px 14px 28px;
+      }
+      @media (min-width: 520px) {
+        .form-overlay { align-items: center; padding: 16px; justify-content: center; }
+        .form-modal { border-radius: 20px; max-width: 560px; max-height: 90vh; padding: 14px 14px 16px; }
+      }
+
+      /* ── Panel (shared by recipe-form + plan-form interior) ── */
       .panel__header {
         display: flex; align-items: center; justify-content: space-between;
         margin-bottom: 14px;
