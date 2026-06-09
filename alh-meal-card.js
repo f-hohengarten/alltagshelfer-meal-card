@@ -415,11 +415,11 @@ class AlhMealCard extends HTMLElement {
         ${this._view === 'woche'   ? this._renderWoche()   : ''}
         ${this._view === 'rezepte' ? this._renderRezepte() : ''}
         ${this._view === 'einkauf' ? this._renderEinkauf() : ''}
+        ${this._recipeDetail ? this._renderRecipeDetailOverlay() : ''}
+        ${this._activePanel === 'recipe-form'  ? this._renderRecipeForm()  : ''}
+        ${this._activePanel === 'plan-form'    ? this._renderPlanForm()    : ''}
+        ${this._activePanel === 'json-import'  ? this._renderJsonImport()  : ''}
       </div>
-      ${this._recipeDetail ? this._renderRecipeDetailOverlay() : ''}
-      ${this._activePanel === 'recipe-form'  ? this._renderRecipeForm()  : ''}
-      ${this._activePanel === 'plan-form'    ? this._renderPlanForm()    : ''}
-      ${this._activePanel === 'json-import'  ? this._renderJsonImport()  : ''}
     `;
     this._bind();
     this._restoreFocus();
@@ -2096,6 +2096,7 @@ class AlhMealCard extends HTMLElement {
         overflow: hidden;
         font-family: var(--primary-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
         height: 100%; display: flex; flex-direction: column;
+        position: relative;
       }
 
       /* ── Header ── */
@@ -2481,22 +2482,20 @@ class AlhMealCard extends HTMLElement {
 
       /* ── Form Modal Overlay ── */
       .form-overlay {
-        position: fixed; inset: 0; z-index: 9999;
-        background: rgba(0,0,0,0.72); backdrop-filter: blur(6px);
+        position: absolute; inset: 0; z-index: 9999;
+        background: rgba(0,0,0,0.75); backdrop-filter: blur(6px);
         display: flex; align-items: flex-end;
         animation: fadeIn 0.18s ease;
+        border-radius: inherit;
       }
       .form-modal {
         background: var(--ha-card-background, #1c1c1e);
         border-radius: 20px 20px 0 0; overflow-y: auto;
-        width: 100%; max-height: 88vh;
+        width: 100%; max-height: 90%;
         box-shadow: 0 -8px 40px rgba(0,0,0,0.5);
         animation: slideUp 0.22s ease;
-        padding: 14px 14px 28px;
-      }
-      @media (min-width: 520px) {
-        .form-overlay { align-items: center; padding: 16px; justify-content: center; }
-        .form-modal { border-radius: 20px; max-width: 560px; max-height: 90vh; padding: 14px 14px 16px; }
+        padding: 14px 14px 24px;
+        flex-shrink: 0;
       }
 
       /* ── Panel (shared by recipe-form + plan-form interior) ── */
@@ -2690,11 +2689,12 @@ class AlhMealCard extends HTMLElement {
 
       /* ── Recipe Detail Overlay ── */
       .detail-backdrop {
-        position: fixed; inset: 0; z-index: 9999;
-        background: rgba(0,0,0,0.72); backdrop-filter: blur(6px);
+        position: absolute; inset: 0; z-index: 9999;
+        background: rgba(0,0,0,0.75); backdrop-filter: blur(6px);
         display: flex; align-items: center; justify-content: center;
         padding: 16px;
         animation: fadeIn 0.18s ease;
+        border-radius: inherit;
       }
       @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
 
