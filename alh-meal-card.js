@@ -1,14 +1,29 @@
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const CATEGORIES = [
-  { v: 'pasta',       l: 'Pasta' },
-  { v: 'salat',       l: 'Salate' },
-  { v: 'fleisch',     l: 'Fleisch' },
-  { v: 'vegetarisch', l: 'Vegetarisch' },
-  { v: 'suppe',       l: 'Suppen' },
-  { v: 'snack',       l: 'Snacks' },
-  { v: 'dessert',     l: 'Desserts' },
-  { v: 'sonstiges',   l: 'Sonstiges' },
+const DEFAULT_CATEGORIES = [
+  { v: 'pasta',       l: 'Pasta',       bg: 'rgba(6,49,67,0.8)',    tc: '#5AC8F5' },
+  { v: 'salat',       l: 'Salate',      bg: 'rgba(9,79,20,0.8)',    tc: '#32D74B' },
+  { v: 'fleisch',     l: 'Fleisch',     bg: 'rgba(59,38,5,0.8)',    tc: '#FF9F0A' },
+  { v: 'vegetarisch', l: 'Vegetarisch', bg: 'rgba(9,64,17,0.8)',    tc: '#32D74B' },
+  { v: 'suppe',       l: 'Suppen',      bg: 'rgba(9,76,53,0.8)',    tc: '#6adc91' },
+  { v: 'snack',       l: 'Snacks',      bg: 'rgba(80,68,8,0.85)',   tc: '#e6c400' },
+  { v: 'dessert',     l: 'Desserts',    bg: 'rgba(52,12,72,0.8)',   tc: '#BF5AF2' },
+  { v: 'sonstiges',   l: 'Sonstiges',   bg: 'rgba(60,60,60,0.85)',  tc: '#c8c8c8' },
+];
+
+const CONFIG_ITEM_MARKER = '__alh_config__';
+
+const CAT_PALETTE = [
+  { bg: 'rgba(6,49,67,0.8)',   tc: '#5AC8F5' },
+  { bg: 'rgba(9,79,20,0.8)',   tc: '#32D74B' },
+  { bg: 'rgba(59,38,5,0.8)',   tc: '#FF9F0A' },
+  { bg: 'rgba(9,76,53,0.8)',   tc: '#6adc91' },
+  { bg: 'rgba(80,68,8,0.85)',  tc: '#e6c400' },
+  { bg: 'rgba(52,12,72,0.8)',  tc: '#BF5AF2' },
+  { bg: 'rgba(67,10,10,0.8)',  tc: '#FF453A' },
+  { bg: 'rgba(0,55,55,0.8)',   tc: '#5AC8FA' },
+  { bg: 'rgba(30,30,60,0.8)',  tc: '#7D7AFF' },
+  { bg: 'rgba(50,20,0,0.8)',   tc: '#FFB340' },
 ];
 
 const UNITS = ['g', 'kg', 'ml', 'l', 'Stk', 'Zehe', 'EL', 'TL', 'Prise', 'Bund', 'Pkg'];
@@ -269,6 +284,10 @@ class AlhMealCard extends HTMLElement {
     this._jsonImportText  = '';
     this._jsonImportError = '';
     this._jsonImportCount = 0;
+
+    this._categories      = this._loadCategories();
+    this._configItem      = null;
+    this._catMgmtNewLabel = '';
   }
 
   _blankRecipeForm() {
@@ -283,6 +302,60 @@ class AlhMealCard extends HTMLElement {
 
   _blankPlanForm() {
     return { open: false, dayIso: '', recipeUid: '', srv: 4, slot: 'mittag' };
+  }
+
+  _loadCategories() {
+    try {
+      const stored = localStorage.getItem('alh-meal-categories');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return [...DEFAULT_CATEGORIES];
+  }
+
+  _saveCategories() {
+    localStorage.setItem('alh-meal-categories', JSON.stringify(this._categories));
+    const desc = JSON.stringify({ categories: this._categories });
+    if (this._configItem) {
+      this._svc(this._config.recipe_entity, 'update_item', {
+        item: this._configItem.uid,
+        description: desc,
+      }).catch(e => console.error('[alh-meal-card] saveCategories:', e));
+    } else {
+      this._svc(this._config.recipe_entity, 'add_item', {
+        item: CONFIG_ITEM_MARKER,
+        description: desc,
+      }).catch(e => console.error('[alh-meal-card] saveCategories:', e));
+    }
+  }
+
+  _catBadgeStyle(catV) {
+    const cat = this._categories.find(c => c.v === catV);
+    if (cat) return `background:${cat.bg};color:${cat.tc}`;
+    return 'background:rgba(60,60,60,0.85);color:#c8c8c8';
+  }
+
+  _addCategory() {
+    const labelEl = this.shadowRoot.querySelector('.cat-add__label');
+    const label = (labelEl?.value ?? this._catMgmtNewLabel).trim();
+    if (!label) return;
+    const v = label.toLowerCase()
+      .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue')
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    if (!v) return;
+    if (this._categories.some(c => c.v === v)) {
+      if (labelEl) { labelEl.focus(); labelEl.style.borderColor = 'var(--error-color,#f44336)'; }
+      return;
+    }
+    const usedBgs = new Set(this._categories.map(c => c.bg));
+    const color = CAT_PALETTE.find(p => !usedBgs.has(p.bg)) || CAT_PALETTE[this._categories.length % CAT_PALETTE.length];
+    this._categories.push({ v, l: label, bg: color.bg, tc: color.tc });
+    this._saveCategories();
+    this._catMgmtNewLabel = '';
+    this._activePanel = 'manage-cats';
+    this._render();
   }
 
   static getStubConfig() {
@@ -353,12 +426,28 @@ class AlhMealCard extends HTMLElement {
         { entity_id: this._config.recipe_entity },
         false, true
       );
-      this._recipes = result.response?.[this._config.recipe_entity]?.items ?? [];
+      const allItems = result.response?.[this._config.recipe_entity]?.items ?? [];
+      this._applyConfigItem(allItems);
+      this._recipes = allItems.filter(r => r.summary !== CONFIG_ITEM_MARKER);
     } catch (e) {
       console.error('[alh-meal-card] fetchRecipes:', e);
-      this._recipes = this._hass.states[this._config.recipe_entity]?.attributes?.items ?? [];
+      const fallback = this._hass.states[this._config.recipe_entity]?.attributes?.items ?? [];
+      this._recipes = fallback.filter(r => r.summary !== CONFIG_ITEM_MARKER);
     }
     this._render();
+  }
+
+  _applyConfigItem(allItems) {
+    const item = allItems.find(r => r.summary === CONFIG_ITEM_MARKER);
+    this._configItem = item || null;
+    if (!item) return;
+    try {
+      const cfg = JSON.parse(item.description || '{}');
+      if (Array.isArray(cfg.categories) && cfg.categories.length > 0) {
+        this._categories = cfg.categories;
+        localStorage.setItem('alh-meal-categories', JSON.stringify(this._categories));
+      }
+    } catch (e) {}
   }
 
   async _fetchPlan() {
@@ -419,6 +508,7 @@ class AlhMealCard extends HTMLElement {
         ${this._activePanel === 'recipe-form'  ? this._renderRecipeForm()  : ''}
         ${this._activePanel === 'plan-form'    ? this._renderPlanForm()    : ''}
         ${this._activePanel === 'json-import'  ? this._renderJsonImport()  : ''}
+        ${this._activePanel === 'manage-cats'  ? this._renderManageCats()  : ''}
       </div>
     `;
     this._bind();
@@ -601,9 +691,13 @@ class AlhMealCard extends HTMLElement {
         </div>
         <div class="cat-filters">
           <button class="cat-pill${this._catFilter === 'all' ? ' cat-pill--active' : ''}" data-cat="all">Alle</button>
-          ${CATEGORIES.map(c => `
+          ${this._categories.map(c => `
             <button class="cat-pill${this._catFilter === c.v ? ' cat-pill--active' : ''}" data-cat="${c.v}">${c.l}</button>
           `).join('')}
+          <button class="icon-btn icon-btn--sm cat-filters__manage" data-action="open-manage-cats"
+            aria-label="Kategorien verwalten" title="Kategorien verwalten" style="flex-shrink:0;margin-left:2px">
+            <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.22-.07.47.12.61l2.03 1.58c-.05.3-.07.63-.07.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+          </button>
         </div>
         ${filtered.length === 0 ? `
           <div class="empty">Keine Rezepte gefunden.<br>Tippe auf + um ein Rezept anzulegen.</div>
@@ -635,7 +729,7 @@ class AlhMealCard extends HTMLElement {
   _renderRecipeCard(recipe) {
     const meta     = parseRecipeMeta(recipe.description);
     const score    = meta.score;
-    const catLabel = CATEGORIES.find(c => c.v === meta.cat)?.l ?? meta.cat;
+    const catLabel = this._categories.find(c => c.v === meta.cat)?.l ?? meta.cat;
     return `
       <div class="recipe-card" data-action="open-detail" data-recipe-uid="${x(recipe.uid)}">
         ${meta.img ? `
@@ -643,7 +737,7 @@ class AlhMealCard extends HTMLElement {
             <img class="recipe-card__img" src="${x(meta.img)}" alt="" loading="lazy"
               onerror="this.closest('.recipe-card__img-wrap').style.display='none'" />
             <div class="recipe-card__img-overlay">
-              <span class="cat-badge cat-badge--${x(meta.cat)}">${x(catLabel)}</span>
+              <span class="cat-badge" style="${this._catBadgeStyle(meta.cat)}">${x(catLabel)}</span>
               ${score ? `<span class="nutri-badge" style="background:${nutriColor(score)};color:${nutriTextColor(score)}">${score}</span>` : ''}
             </div>
             <button class="recipe-card__edit icon-btn icon-btn--sm" data-action="edit-recipe" data-recipe-uid="${x(recipe.uid)}" aria-label="Bearbeiten">
@@ -656,7 +750,7 @@ class AlhMealCard extends HTMLElement {
         ` : `
           <div class="recipe-card__top">
             <div class="recipe-card__badges">
-              <span class="cat-badge cat-badge--${x(meta.cat)}">${x(catLabel)}</span>
+              <span class="cat-badge" style="${this._catBadgeStyle(meta.cat)}">${x(catLabel)}</span>
               ${score ? `<span class="nutri-badge" style="background:${nutriColor(score)};color:${nutriTextColor(score)}">${score}</span>` : ''}
             </div>
             <div style="display:flex;gap:4px">
@@ -790,7 +884,7 @@ class AlhMealCard extends HTMLElement {
     const recipe = this._recipes.find(r => r.uid === this._recipeDetail);
     if (!recipe) return '';
     const meta     = parseRecipeMeta(recipe.description);
-    const catLabel = CATEGORIES.find(c => c.v === meta.cat)?.l ?? meta.cat;
+    const catLabel = this._categories.find(c => c.v === meta.cat)?.l ?? meta.cat;
     return `
       <div class="detail-backdrop" data-action="close-detail">
         <div class="detail-modal" role="dialog">
@@ -799,13 +893,13 @@ class AlhMealCard extends HTMLElement {
               <img class="detail-img" src="${x(meta.img)}" alt="" draggable="false"
                 onerror="this.closest('.detail-img-wrap').style.display='none'" />
               <div class="detail-img-overlay">
-                <span class="cat-badge cat-badge--${x(meta.cat)}">${x(catLabel)}</span>
+                <span class="cat-badge" style="${this._catBadgeStyle(meta.cat)}">${x(catLabel)}</span>
                 ${meta.score ? `<span class="nutri-badge" style="background:${nutriColor(meta.score)};color:${nutriTextColor(meta.score)}">${meta.score}</span>` : ''}
               </div>
             </div>
           ` : `
             <div class="detail-no-img">
-              <span class="cat-badge cat-badge--${x(meta.cat)}">${x(catLabel)}</span>
+              <span class="cat-badge" style="${this._catBadgeStyle(meta.cat)}">${x(catLabel)}</span>
               ${meta.score ? `<span class="nutri-badge" style="background:${nutriColor(meta.score)};color:${nutriTextColor(meta.score)}">${meta.score}</span>` : ''}
             </div>
           `}
@@ -856,7 +950,7 @@ class AlhMealCard extends HTMLElement {
                     return `<div class="plan-recipe-dropdown">
                       ${results.map(r => {
                         const m = parseRecipeMeta(r.description);
-                        const catL = CATEGORIES.find(c => c.v === m.cat)?.l ?? m.cat;
+                        const catL = this._categories.find(c => c.v === m.cat)?.l ?? m.cat;
                         return `<div class="detail-change-option plan-recipe-option" data-recipe-uid="${x(r.uid)}">
                           <span class="plan-recipe-option__title">${x(r.summary)}</span>
                           <span class="plan-recipe-option__meta">${x(catL)} · ${m.srv} Pers.</span>
@@ -994,7 +1088,7 @@ class AlhMealCard extends HTMLElement {
 
         <div class="form__section-label">Kategorie</div>
         <div class="picker picker--grid">
-          ${CATEGORIES.map(c => `
+          ${this._categories.map(c => `
             <button class="pill${f.cat === c.v ? ' pill--on' : ''}" data-cat="${c.v}">${c.l}</button>
           `).join('')}
         </div>
@@ -1117,7 +1211,7 @@ class AlhMealCard extends HTMLElement {
                 <div class="plan-recipe-dropdown">
                   ${results.map(r => {
                     const m = parseRecipeMeta(r.description);
-                    const catL = CATEGORIES.find(c => c.v === m.cat)?.l ?? m.cat;
+                    const catL = this._categories.find(c => c.v === m.cat)?.l ?? m.cat;
                     return `<div class="plan-recipe-option" data-recipe-uid="${x(r.uid)}">
                       <span class="plan-recipe-option__title">${x(r.summary)}</span>
                       <span class="plan-recipe-option__meta">${x(catL)} · ${m.srv} Pers.</span>
@@ -1185,7 +1279,7 @@ class AlhMealCard extends HTMLElement {
 
         <p class="import-paste-instructions">
           Füge ein JSON-Array mit Rezepten ein. Jedes Rezept braucht mindestens <code>title</code>.
-          Erlaubte Kategorien: <code>${CATEGORIES.map(c => c.v).join(', ')}</code>.
+          Erlaubte Kategorien: <code>${this._categories.map(c => c.v).join(', ')}</code>.
         </p>
 
         <div class="form__section-label">JSON</div>
@@ -1210,6 +1304,61 @@ class AlhMealCard extends HTMLElement {
             <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
             Importieren
           </button>
+        </div>
+      </div>
+      </div>
+    `;
+  }
+
+  // ─── Manage Categories Panel ─────────────────────────────────────────────────
+
+  _renderManageCats() {
+    const recipeCounts = {};
+    for (const r of this._recipes) {
+      if (r.status === 'completed') continue;
+      const meta = parseRecipeMeta(r.description);
+      recipeCounts[meta.cat] = (recipeCounts[meta.cat] || 0) + 1;
+    }
+    return `
+      <div class="form-overlay" data-close-panel="manage-cats">
+      <div class="form-modal">
+        <div class="panel__header">
+          <span>Kategorien verwalten</span>
+          <button class="icon-btn" data-action="cancel-manage-cats" aria-label="Schließen">
+            <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          </button>
+        </div>
+
+        <div class="cat-manage-list">
+          ${this._categories.map(c => {
+            const count = recipeCounts[c.v] || 0;
+            const isFixed = c.v === 'sonstiges';
+            return `
+              <div class="cat-manage-item">
+                <span class="cat-manage-dot" style="background:${c.tc}"></span>
+                <span class="cat-manage-label">${x(c.l)}</span>
+                ${count > 0 ? `<span class="cat-manage-count">${count} Rezept${count !== 1 ? 'e' : ''}</span>` : ''}
+                ${isFixed
+                  ? `<span class="cat-manage-fixed">Standard</span>`
+                  : `<button class="icon-btn icon-btn--sm" data-action="delete-cat" data-cat-v="${x(c.v)}"
+                      aria-label="Löschen" title="${count > 0 ? `${count} Rezept${count !== 1 ? 'e' : ''} nutzen diese Kategorie` : 'Kategorie löschen'}" style="margin-left:auto">
+                      <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                    </button>`
+                }
+              </div>
+            `;
+          }).join('')}
+        </div>
+
+        <div class="form__section-label" style="margin-top:16px">Neue Kategorie</div>
+        <div class="cat-add-row">
+          <input class="cat-add__label form__input form__input--sm" type="text"
+            placeholder="Name der Kategorie" value="${x(this._catMgmtNewLabel)}" autocomplete="off" />
+          <button class="btn btn--primary btn--sm" data-action="add-cat">Hinzufügen</button>
+        </div>
+
+        <div class="form__actions">
+          <button class="btn btn--ghost" data-action="cancel-manage-cats">Schließen</button>
         </div>
       </div>
       </div>
@@ -1450,6 +1599,7 @@ class AlhMealCard extends HTMLElement {
         if (panel === 'recipe-form') { this._recipeForm = this._blankRecipeForm(); this._importResult = null; }
         else if (panel === 'plan-form') { this._planForm = this._blankPlanForm(); this._planSearch = ''; }
         else if (panel === 'json-import') { this._jsonImportText = ''; this._jsonImportError = ''; this._jsonImportCount = 0; }
+        else if (panel === 'manage-cats') { this._catMgmtNewLabel = ''; }
         this._render();
       });
     });
@@ -1815,6 +1965,52 @@ class AlhMealCard extends HTMLElement {
 
     const submitJsonImport = root.querySelector('[data-action="submit-json-import"]');
     if (submitJsonImport) submitJsonImport.addEventListener('click', () => this._submitJsonImport());
+
+    // ── Manage categories ──
+
+    const openManageCats = root.querySelector('[data-action="open-manage-cats"]');
+    if (openManageCats) openManageCats.addEventListener('click', () => {
+      this._catMgmtNewLabel = '';
+      this._activePanel = 'manage-cats';
+      this._render();
+    });
+
+    root.querySelectorAll('[data-action="cancel-manage-cats"]').forEach(el => {
+      el.addEventListener('click', () => {
+        this._activePanel = null;
+        this._catMgmtNewLabel = '';
+        this._render();
+      });
+    });
+
+    root.querySelectorAll('[data-action="delete-cat"]').forEach(el => {
+      el.addEventListener('click', () => {
+        const v = el.dataset.catV;
+        if (!v || v === 'sonstiges') return;
+        const cat = this._categories.find(c => c.v === v);
+        if (!cat) return;
+        const count = this._recipes.filter(r => r.status !== 'completed' && parseRecipeMeta(r.description).cat === v).length;
+        const msg = count > 0
+          ? `„${cat.l}" wirklich löschen?\n${count} Rezept${count !== 1 ? 'e' : ''} ${count !== 1 ? 'nutzen' : 'nutzt'} diese Kategorie (die Rezepte bleiben erhalten, zeigen dann den Rohwert als Label).`
+          : `„${cat.l}" wirklich löschen?`;
+        if (!confirm(msg)) return;
+        if (this._catFilter === v) this._catFilter = 'all';
+        this._categories = this._categories.filter(c => c.v !== v);
+        this._saveCategories();
+        this._catMgmtNewLabel = '';
+        this._activePanel = 'manage-cats';
+        this._render();
+      });
+    });
+
+    const catAddLabelEl = root.querySelector('.cat-add__label');
+    if (catAddLabelEl) {
+      catAddLabelEl.addEventListener('input', () => { this._catMgmtNewLabel = catAddLabelEl.value; });
+      catAddLabelEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this._addCategory(); } });
+    }
+
+    const addCatBtn = root.querySelector('[data-action="add-cat"]');
+    if (addCatBtn) addCatBtn.addEventListener('click', () => this._addCategory());
   }
 
   _updatePlanSearchDropdown() {
@@ -1842,7 +2038,7 @@ class AlhMealCard extends HTMLElement {
     }
     dropdown.innerHTML = results.map(r => {
       const m = parseRecipeMeta(r.description);
-      const catL = CATEGORIES.find(c => c.v === m.cat)?.l ?? m.cat;
+      const catL = this._categories.find(c => c.v === m.cat)?.l ?? m.cat;
       return `<div class="plan-recipe-option" data-recipe-uid="${x(r.uid)}">
         <span class="plan-recipe-option__title">${x(r.summary)}</span>
         <span class="plan-recipe-option__meta">${x(catL)} · ${m.srv} Pers.</span>
@@ -1994,7 +2190,7 @@ class AlhMealCard extends HTMLElement {
       return;
     }
 
-    const validCats = CATEGORIES.map(c => c.v);
+    const validCats = this._categories.map(c => c.v);
     let count = 0;
     const errors = [];
 
@@ -2808,6 +3004,21 @@ class AlhMealCard extends HTMLElement {
       }
 
       .detail-change-wrap { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+
+      /* ── Manage Categories ── */
+      .cat-manage-list { display: flex; flex-direction: column; gap: 4px; }
+      .cat-manage-item {
+        display: flex; align-items: center; gap: 8px; padding: 9px 10px;
+        background: rgba(128,128,128,0.05); border-radius: 10px;
+        border: 1px solid rgba(128,128,128,0.1);
+      }
+      .cat-manage-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+      .cat-manage-label { font-size: 13px; font-weight: 500; color: var(--primary-text-color,currentColor); flex: 1; }
+      .cat-manage-count { font-size: 11px; color: var(--secondary-text-color,currentColor); opacity: 0.55; white-space: nowrap; }
+      .cat-manage-fixed { font-size: 11px; color: var(--secondary-text-color,currentColor); opacity: 0.35; margin-left: auto; }
+      .cat-filters__manage { flex-shrink: 0; }
+      .cat-add-row { display: flex; gap: 8px; align-items: center; }
+      .cat-add__label { flex: 1; min-width: 0; }
     `;
   }
 }
