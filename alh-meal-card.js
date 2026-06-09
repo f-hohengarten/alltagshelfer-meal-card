@@ -1692,11 +1692,12 @@ class AlhMealCard extends HTMLElement {
     const submitRecipe = root.querySelector('[data-action="submit-recipe"]');
     if (submitRecipe) submitRecipe.addEventListener('click', () => this._submitRecipe());
 
-    const cancelRecipe = root.querySelector('[data-action="cancel-recipe"]');
-    if (cancelRecipe) cancelRecipe.addEventListener('click', () => {
-      this._activePanel = null;
-      this._recipeForm  = this._blankRecipeForm();
-      this._render();
+    root.querySelectorAll('[data-action="cancel-recipe"]').forEach(el => {
+      el.addEventListener('click', () => {
+        this._activePanel = null;
+        this._recipeForm  = this._blankRecipeForm();
+        this._render();
+      });
     });
 
     const deleteRecipe = root.querySelector('[data-action="delete-recipe"]');
@@ -1783,12 +1784,13 @@ class AlhMealCard extends HTMLElement {
     const submitPlan = root.querySelector('[data-action="submit-plan"]');
     if (submitPlan) submitPlan.addEventListener('click', () => this._submitPlan());
 
-    const cancelPlan = root.querySelector('[data-action="cancel-plan"]');
-    if (cancelPlan) cancelPlan.addEventListener('click', () => {
-      this._activePanel = null;
-      this._planForm    = this._blankPlanForm();
-      this._planSearch  = '';
-      this._render();
+    root.querySelectorAll('[data-action="cancel-plan"]').forEach(el => {
+      el.addEventListener('click', () => {
+        this._activePanel = null;
+        this._planForm    = this._blankPlanForm();
+        this._planSearch  = '';
+        this._render();
+      });
     });
 
     // ── JSON Import events ──
@@ -2484,14 +2486,14 @@ class AlhMealCard extends HTMLElement {
       .form-overlay {
         position: absolute; inset: 0; z-index: 9999;
         background: rgba(0,0,0,0.75); backdrop-filter: blur(6px);
-        display: flex; align-items: flex-end;
+        display: flex; align-items: flex-end; justify-content: center;
         animation: fadeIn 0.18s ease;
         border-radius: inherit;
       }
       .form-modal {
         background: var(--ha-card-background, #1c1c1e);
         border-radius: 20px 20px 0 0; overflow-y: auto;
-        width: 100%; max-height: 90%;
+        width: 100%; max-width: 560px; max-height: 90%;
         box-shadow: 0 -8px 40px rgba(0,0,0,0.5);
         animation: slideUp 0.22s ease;
         padding: 14px 14px 24px;
