@@ -1741,12 +1741,7 @@ class AlhMealCard extends HTMLElement {
     if (planSearchEl) {
       planSearchEl.addEventListener('input', () => {
         this._planSearch = planSearchEl.value;
-        this._render();
-        // Restore focus after re-render
-        setTimeout(() => {
-          const el = this.shadowRoot.querySelector('.plan-recipe-search');
-          if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
-        }, 0);
+        this._updatePlanSearchDropdown();
       });
     }
 
@@ -1820,6 +1815,50 @@ class AlhMealCard extends HTMLElement {
 
     const submitJsonImport = root.querySelector('[data-action="submit-json-import"]');
     if (submitJsonImport) submitJsonImport.addEventListener('click', () => this._submitJsonImport());
+  }
+
+  _updatePlanSearchDropdown() {
+    const wrap = this.shadowRoot.querySelector('.plan-recipe-search-wrap');
+    if (!wrap) return;
+    let dropdown = wrap.querySelector('.plan-recipe-dropdown');
+    const q = this._planSearch.toLowerCase();
+    const results = q
+      ? this._recipes.filter(r => r.status !== 'completed' && r.summary.toLowerCase().includes(q)).slice(0, 6)
+      : [];
+    if (!results.length) {
+      if (dropdown) dropdown.remove();
+      if (q) {
+        const empty = document.createElement('div');
+        empty.className = 'plan-recipe-dropdown';
+        empty.innerHTML = '<div class="plan-recipe-option plan-recipe-option--empty">Keine Rezepte gefunden</div>';
+        wrap.appendChild(empty);
+      }
+      return;
+    }
+    if (!dropdown) {
+      dropdown = document.createElement('div');
+      dropdown.className = 'plan-recipe-dropdown';
+      wrap.appendChild(dropdown);
+    }
+    dropdown.innerHTML = results.map(r => {
+      const m = parseRecipeMeta(r.description);
+      const catL = CATEGORIES.find(c => c.v === m.cat)?.l ?? m.cat;
+      return `<div class="plan-recipe-option" data-recipe-uid="${x(r.uid)}">
+        <span class="plan-recipe-option__title">${x(r.summary)}</span>
+        <span class="plan-recipe-option__meta">${x(catL)} · ${m.srv} Pers.</span>
+      </div>`;
+    }).join('');
+    dropdown.querySelectorAll('.plan-recipe-option').forEach(el => {
+      el.addEventListener('click', () => {
+        const uid = el.dataset.recipeUid;
+        if (!uid) return;
+        this._planForm.recipeUid = uid;
+        const recipe = this._recipes.find(r => r.uid === uid);
+        if (recipe) this._planForm.srv = parseRecipeMeta(recipe.description).srv || 4;
+        this._planSearch = '';
+        this._render();
+      });
+    });
   }
 
   _restoreFocus() {
@@ -2486,15 +2525,16 @@ class AlhMealCard extends HTMLElement {
       .form-overlay {
         position: absolute; inset: 0; z-index: 9999;
         background: rgba(0,0,0,0.75); backdrop-filter: blur(6px);
-        display: flex; align-items: flex-end; justify-content: center;
+        display: flex; align-items: center; justify-content: center;
+        padding: 16px;
         animation: fadeIn 0.18s ease;
         border-radius: inherit;
       }
       .form-modal {
         background: var(--ha-card-background, #1c1c1e);
-        border-radius: 20px 20px 0 0; overflow-y: auto;
-        width: 100%; max-width: 560px; max-height: 90%;
-        box-shadow: 0 -8px 40px rgba(0,0,0,0.5);
+        border-radius: 20px; overflow-y: auto;
+        width: 100%; max-width: 540px; max-height: 100%;
+        box-shadow: 0 24px 64px rgba(0,0,0,0.6);
         animation: slideUp 0.22s ease;
         padding: 14px 14px 24px;
         flex-shrink: 0;
