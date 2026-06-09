@@ -2387,12 +2387,12 @@ class AlhMealCard extends HTMLElement {
       .recipe-card__actions { margin-top: auto; padding-top: 4px; }
 
       /* ── Plan search dropdown ── */
-      .plan-recipe-search-wrap { position: relative; }
+      .plan-recipe-search-wrap { }
       .plan-recipe-dropdown {
-        position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 10;
-        background: var(--ha-card-background, #1c1c1e);
+        margin-top: 4px;
+        background: rgba(40,40,42,0.98);
         border: 1px solid rgba(128,128,128,0.2); border-radius: 12px;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.35); overflow: hidden;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.4); overflow: hidden;
       }
       .plan-recipe-option {
         padding: 10px 14px; cursor: pointer;
