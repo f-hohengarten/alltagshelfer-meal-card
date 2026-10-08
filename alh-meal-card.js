@@ -13,6 +13,17 @@ const DEFAULT_CATEGORIES = [
 
 const CONFIG_ITEM_MARKER = '__alh_config__';
 
+// Pantry staples are pre-deselected when ingredients go to the shopping list
+const DEFAULT_PANTRY = ['Salz', 'Pfeffer', 'Salz & Pfeffer', 'Olivenöl', 'Öl', 'Sonnenblumenöl', 'Rapsöl', 'Zucker', 'Wasser'];
+
+function isPantry(name, pantry) {
+  const n = String(name ?? '').toLowerCase().trim();
+  return (pantry || []).some(p => {
+    const t = String(p).toLowerCase().trim();
+    return t && (n === t || n.startsWith(t + ' '));
+  });
+}
+
 const CAT_PALETTE = [
   { bg: 'rgba(6,49,67,0.8)',   tc: '#5AC8F5' },
   { bg: 'rgba(9,79,20,0.8)',   tc: '#32D74B' },
@@ -323,6 +334,8 @@ class AlhMealCard extends HTMLElement {
     this._wakeLock      = null;
     this._detailShop    = '';   // '' | 'busy' | 'done'
     this._shopError     = '';   // shown under the shopping buttons
+    this._shopPick      = null; // Set of ingredient indices while choosing what goes on the list
+    this._settings      = this._loadSettings();
     this._searchQuery   = '';
 
     this._activePanel   = null; // 'recipe-form' | 'plan-form' | null
@@ -381,19 +394,36 @@ class AlhMealCard extends HTMLElement {
     return [...DEFAULT_CATEGORIES];
   }
 
-  _saveCategories() {
+  _loadSettings() {
+    const base = { shopping_entity: '', pantry: [...DEFAULT_PANTRY] };
+    try {
+      const stored = JSON.parse(localStorage.getItem('alh-meal-settings') || 'null');
+      if (stored && typeof stored === 'object') return { ...base, ...stored };
+    } catch (e) {}
+    return base;
+  }
+
+  // Shopping list chosen in the settings wins over the YAML option
+  _shoppingEntity() {
+    return this._settings.shopping_entity || this._config.shopping_entity || '';
+  }
+
+  _saveCategories() { this._saveConfig(); }
+
+  _saveConfig() {
     localStorage.setItem('alh-meal-categories', JSON.stringify(this._categories));
-    const desc = JSON.stringify({ categories: this._categories });
+    localStorage.setItem('alh-meal-settings', JSON.stringify(this._settings));
+    const desc = JSON.stringify({ categories: this._categories, settings: this._settings });
     if (this._configItem) {
       this._svc(this._config.recipe_entity, 'update_item', {
         item: this._configItem.uid,
         description: desc,
-      }).catch(e => console.error('[alh-meal-card] saveCategories:', e));
+      }).catch(e => console.error('[alh-meal-card] saveConfig:', e));
     } else {
       this._svc(this._config.recipe_entity, 'add_item', {
         item: CONFIG_ITEM_MARKER,
         description: desc,
-      }).catch(e => console.error('[alh-meal-card] saveCategories:', e));
+      }).catch(e => console.error('[alh-meal-card] saveConfig:', e));
     }
   }
 
@@ -524,6 +554,10 @@ class AlhMealCard extends HTMLElement {
         this._categories = cfg.categories;
         localStorage.setItem('alh-meal-categories', JSON.stringify(this._categories));
       }
+      if (cfg.settings && typeof cfg.settings === 'object') {
+        this._settings = { ...this._loadSettings(), ...cfg.settings };
+        localStorage.setItem('alh-meal-settings', JSON.stringify(this._settings));
+      }
     } catch (e) {}
   }
 
@@ -604,6 +638,7 @@ class AlhMealCard extends HTMLElement {
         ${this._activePanel === 'plan-form'    ? this._renderPlanForm()    : ''}
         ${this._activePanel === 'json-import'  ? this._renderJsonImport()  : ''}
         ${this._activePanel === 'manage-cats'  ? this._renderManageCats()  : ''}
+        ${this._activePanel === 'settings'     ? this._renderSettings()    : ''}
       </div>
     `;
     this._bind();
@@ -673,6 +708,9 @@ class AlhMealCard extends HTMLElement {
           <span class="header__title">${x(this._config.title)}</span>
         </div>
         <div class="header__right">
+          <button class="icon-btn header__settings" data-action="open-settings" aria-label="Einstellungen" title="Einstellungen">
+            <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.22-.07.47.12.61l2.03 1.58c-.05.3-.07.63-.07.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+          </button>
           ${canAdd ? `
             <div class="add-menu-wrap">
               <button class="add-btn" data-action="toggle-add-menu" aria-label="Hinzufügen" aria-haspopup="menu" aria-expanded="${this._addMenuOpen}">
@@ -998,7 +1036,7 @@ class AlhMealCard extends HTMLElement {
                 `;
               }).join('')}
             </ul>
-            ${this._config.shopping_entity ? `
+            ${this._shoppingEntity() ? `
               <div class="einkauf__actions">
                 ${this._shopSuccess ? `
                   <div class="shop-success">
@@ -1013,7 +1051,9 @@ class AlhMealCard extends HTMLElement {
                 `}
               </div>
               ${this._shopError ? `<div class="shop-error">${x(this._shopError)}</div>` : ''}
-            ` : ''}
+            ` : `
+              <div class="shop-hint">Keine Einkaufsliste gewählt. <button class="btn btn--text" data-action="open-settings">In den Einstellungen festlegen</button></div>
+            `}
           `}
         ` : ''}
       </div>
@@ -1033,6 +1073,7 @@ class AlhMealCard extends HTMLElement {
     const cook     = this._cookMode;
     const done     = this._cookDone;
     const curStep  = cook ? note.steps.findIndex((_, i) => !done.has(`s:${i}`)) : -1;
+    const pick     = cook ? null : this._shopPick;
     return `
       <div class="detail-backdrop" data-action="close-detail">
         <div class="detail-modal" role="dialog" aria-label="${x(recipe.summary)}">
@@ -1073,18 +1114,38 @@ class AlhMealCard extends HTMLElement {
                       <button class="detail-srv__btn" data-action="detail-srv-plus" data-srv="${srv}" aria-label="Mehr Portionen">+</button>
                     </div>
                   </div>
-                  <ul class="detail-ing-list${cook ? ' is-cook' : ''}">
+                  ${pick ? `
+                    <div class="pick-head">
+                      <span>Was soll auf die Einkaufsliste?</span>
+                      <button class="btn btn--text btn--sm" data-action="pick-all">${pick.size === meta.ingredients.length ? 'Keine' : 'Alle'}</button>
+                    </div>
+                  ` : ''}
+                  <ul class="detail-ing-list${cook ? ' is-cook' : ''}${pick ? ' is-pick' : ''}">
                     ${meta.ingredients.map((ing, i) => {
                       const amt = fmtAmount(ing.amount, scale);
                       const isDone = cook && done.has(`i:${i}`);
+                      const on = pick && pick.has(i);
+                      const attrs = cook ? ` data-cook="i:${i}" role="checkbox" aria-checked="${isDone}"`
+                        : pick ? ` data-pick="${i}" role="checkbox" aria-checked="${on}"` : '';
                       return `
-                        <li class="detail-ing-item${isDone ? ' is-done' : ''}"${cook ? ` data-cook="i:${i}" role="checkbox" aria-checked="${isDone}"` : ''}>
+                        <li class="detail-ing-item${isDone ? ' is-done' : ''}${on ? ' is-on' : ''}"${attrs}>
+                          ${pick ? `<span class="pick-box">${on ? '<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>' : ''}</span>` : ''}
                           <span class="detail-ing-amount">${amt ? `${x(amt)} ${x(ing.unit)}` : ''}</span>
                           <span class="detail-ing-name">${x(ing.name)}</span>
                         </li>`;
                     }).join('')}
                   </ul>
-                  ${this._config.shopping_entity && !cook ? `
+                  ${!cook && pick ? `
+                    <div class="pick-actions">
+                      <button class="btn btn--ghost" data-action="pick-cancel">Abbrechen</button>
+                      <button class="btn btn--primary" data-action="pick-confirm" data-srv="${srv}"${pick.size ? '' : ' disabled'}>
+                        <svg viewBox="0 0 24 24"><path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1.003 1.003 0 0 0 20 4H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/></svg>Hinzufügen (${pick.size})
+                      </button>
+                    </div>
+                    ${this._shopError ? `<div class="shop-error">${x(this._shopError)}</div>` : ''}
+                  ` : !cook && !this._shoppingEntity() ? `
+                    <div class="shop-hint">Keine Einkaufsliste gewählt. <button class="btn btn--text" data-action="open-settings">In den Einstellungen festlegen</button></div>
+                  ` : !cook ? `
                     <button class="btn btn--ghost detail-shop-btn" data-action="detail-to-shop" data-srv="${srv}"${this._detailShop === 'busy' || this._detailShop === 'done' ? ' disabled' : ''}>
                       <svg viewBox="0 0 24 24"><path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1.003 1.003 0 0 0 20 4H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/></svg>
                       ${this._detailShop === 'done' ? 'Auf der Einkaufsliste' : this._detailShop === 'busy' ? 'Wird hinzugefügt…' : `Zutaten für ${srv} ${srv === 1 ? 'Portion' : 'Portionen'} auf die Einkaufsliste`}
@@ -1538,6 +1599,49 @@ class AlhMealCard extends HTMLElement {
     `;
   }
 
+  // ─── Settings Panel ──────────────────────────────────────────────────────────
+
+  _renderSettings() {
+    const current = this._shoppingEntity();
+    const skip = new Set([this._config.recipe_entity, this._config.plan_entity]);
+    const lists = Object.keys(this._hass?.states || {})
+      .filter(id => id.startsWith('todo.') && !skip.has(id))
+      .map(id => ({ id, name: this._hass.states[id].attributes?.friendly_name || id }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'de'));
+    if (current && !lists.some(l => l.id === current)) lists.unshift({ id: current, name: 'Nicht gefunden' });
+    return `
+      <div class="form-overlay" data-close-panel="settings">
+      <div class="form-modal">
+        <div class="panel__header">
+          <span>Einstellungen</span>
+          <button class="icon-btn" data-action="cancel-settings" aria-label="Schließen">
+            <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          </button>
+        </div>
+
+        <div class="form__section-label">Einkaufsliste</div>
+        <select class="settings__shop form__select form__select--full">
+          <option value=""${current ? '' : ' selected'}>– keine –</option>
+          ${lists.map(l => `<option value="${x(l.id)}"${l.id === current ? ' selected' : ''}>${x(l.name)} (${x(l.id)})</option>`).join('')}
+        </select>
+        <p class="settings__hint">Hierhin gehen Zutaten aus dem Einkauf-Tab und aus den Rezepten. Listen mit Beschreibungsfeld (z. B. Bring!) bekommen die Menge als Beschreibung.</p>
+
+        <div class="form__section-label">Vorräte</div>
+        <textarea class="settings__pantry form__note" rows="3" placeholder="Salz, Pfeffer, Olivenöl …">${x(this._settings.pantry.join(', '))}</textarea>
+        <p class="settings__hint">Diese Zutaten sind beim Hinzufügen zur Einkaufsliste abgewählt – du kannst sie jederzeit wieder anhaken. Mit Komma trennen.</p>
+
+        <div class="form__section-label">Kategorien</div>
+        <button class="btn btn--ghost btn--sm" data-action="open-manage-cats">Kategorien verwalten</button>
+
+        <div class="form__actions">
+          <button class="btn btn--ghost" data-action="cancel-settings">Abbrechen</button>
+          <button class="btn btn--primary" data-action="save-settings">Speichern</button>
+        </div>
+      </div>
+      </div>
+    `;
+  }
+
   // ─── Manage Categories Panel ─────────────────────────────────────────────────
 
   _renderManageCats() {
@@ -1727,7 +1831,14 @@ class AlhMealCard extends HTMLElement {
     // Detail: shopping list + cook mode
     const detailShop = root.querySelector('[data-action="detail-to-shop"]');
     if (detailShop) detailShop.addEventListener('click', () => {
-      this._sendRecipeToShopping(this._recipeDetail, Number(detailShop.dataset.srv) || 1);
+      const recipe = this._recipes.find(r => r.uid === this._recipeDetail);
+      if (!recipe) return;
+      this._shopError = this._shoppingConfigError();
+      if (!this._shopError) {
+        const ings = parseRecipeMeta(recipe.description).ingredients;
+        this._shopPick = new Set(ings.map((_, i) => i).filter(i => !isPantry(ings[i].name, this._settings.pantry)));
+      }
+      this._render();
     });
     const cookStart = root.querySelector('[data-action="cook-start"]');
     if (cookStart) cookStart.addEventListener('click', async () => {
@@ -2119,6 +2230,12 @@ class AlhMealCard extends HTMLElement {
           const p    = this._plan.find(p => p.uid === uid);
           const meta = p ? parsePlanMeta(p.description) : {};
           this._shopServings[uid] = meta.srv ?? 4;
+          const recipe = this._recipes.find(r => r.uid === meta.recipe_id);
+          if (recipe) {
+            for (const ing of parseRecipeMeta(recipe.description).ingredients) {
+              if (isPantry(ing.name, this._settings.pantry)) this._shopDeselected.add(`${uid}::${ing.name}::${ing.unit}`);
+            }
+          }
         } else {
           this._shopPlanUids.delete(uid);
           delete this._shopServings[uid];
@@ -2339,11 +2456,54 @@ class AlhMealCard extends HTMLElement {
 
     // ── Manage categories ──
 
-    const openManageCats = root.querySelector('[data-action="open-manage-cats"]');
-    if (openManageCats) openManageCats.addEventListener('click', () => {
+    root.querySelectorAll('[data-action="open-manage-cats"]').forEach(el => el.addEventListener('click', () => {
       this._catMgmtNewLabel = '';
       this._activePanel = 'manage-cats';
       this._render();
+    }));
+
+    // ── Settings ──
+    root.querySelectorAll('[data-action="open-settings"]').forEach(el => el.addEventListener('click', () => {
+      this._addMenuOpen = false;
+      this._resetDetailState();
+      this._recipeDetail = null;
+      this._activePanel = 'settings';
+      this._render();
+    }));
+    root.querySelectorAll('[data-action="cancel-settings"]').forEach(el => el.addEventListener('click', () => {
+      this._activePanel = null;
+      this._render();
+    }));
+    const saveSettings = root.querySelector('[data-action="save-settings"]');
+    if (saveSettings) saveSettings.addEventListener('click', () => {
+      const shop   = root.querySelector('.settings__shop')?.value ?? '';
+      const pantry = (root.querySelector('.settings__pantry')?.value ?? '')
+        .split(/[,\n]/).map(t => t.trim()).filter(Boolean);
+      this._settings = { ...this._settings, shopping_entity: shop, pantry };
+      this._saveConfig();
+      this._shopError = '';
+      this._activePanel = null;
+      this._render();
+    });
+
+    // ── Detail: choose ingredients for the shopping list ──
+    root.querySelectorAll('[data-pick]').forEach(el => el.addEventListener('click', () => {
+      const i = Number(el.dataset.pick);
+      if (this._shopPick.has(i)) this._shopPick.delete(i); else this._shopPick.add(i);
+      this._render();
+    }));
+    const pickAll = root.querySelector('[data-action="pick-all"]');
+    if (pickAll) pickAll.addEventListener('click', () => {
+      const recipe = this._recipes.find(r => r.uid === this._recipeDetail);
+      const n = recipe ? parseRecipeMeta(recipe.description).ingredients.length : 0;
+      this._shopPick = this._shopPick.size === n ? new Set() : new Set(Array.from({ length: n }, (_, i) => i));
+      this._render();
+    });
+    const pickCancel = root.querySelector('[data-action="pick-cancel"]');
+    if (pickCancel) pickCancel.addEventListener('click', () => { this._shopPick = null; this._shopError = ''; this._render(); });
+    const pickConfirm = root.querySelector('[data-action="pick-confirm"]');
+    if (pickConfirm) pickConfirm.addEventListener('click', () => {
+      this._sendRecipeToShopping(this._recipeDetail, Number(pickConfirm.dataset.srv) || 1, this._shopPick);
     });
 
     root.querySelectorAll('[data-action="cancel-manage-cats"]').forEach(el => {
@@ -2574,8 +2734,8 @@ class AlhMealCard extends HTMLElement {
       .catch(e => console.error('[alh-meal-card] updateRecipe:', e));
   }
 
-  async _sendRecipeToShopping(uid, srv) {
-    const entity = this._config.shopping_entity;
+  async _sendRecipeToShopping(uid, srv, indices = null) {
+    const entity = this._shoppingEntity();
     const recipe = this._recipes.find(r => r.uid === uid);
     if (!entity || !recipe || this._detailShop === 'busy' || this._detailShop === 'done') return;
     this._shopError = this._shoppingConfigError();
@@ -2585,11 +2745,13 @@ class AlhMealCard extends HTMLElement {
     this._detailShop = 'busy';
     this._render();
     try {
-      await this._addToShopping(meta.ingredients.map(ing => {
+      const chosen = indices ? meta.ingredients.filter((_, i) => indices.has(i)) : meta.ingredients;
+      await this._addToShopping(chosen.map(ing => {
         const amt = fmtAmount(ing.amount, scale);
         return { name: ing.name, qty: amt ? `${amt} ${ing.unit}`.trim() : '' };
       }));
       this._detailShop = 'done';
+      this._shopPick = null;
     } catch (e) {
       console.error('[alh-meal-card] sendRecipeToShopping:', e);
       this._detailShop = '';
@@ -2611,6 +2773,7 @@ class AlhMealCard extends HTMLElement {
     this._cookDone   = new Set();
     this._detailShop = '';
     this._shopError  = '';
+    this._shopPick   = null;
   }
 
   // Keeps the screen on in cook mode (needs HTTPS; silently skipped otherwise)
@@ -2736,11 +2899,11 @@ class AlhMealCard extends HTMLElement {
   }
 
   _shoppingConfigError() {
-    const e = this._config.shopping_entity;
-    if (!e) return 'Keine Einkaufsliste konfiguriert (shopping_entity).';
+    const e = this._shoppingEntity();
+    if (!e) return 'Keine Einkaufsliste gewählt – bitte in den Einstellungen (Zahnrad oben) festlegen.';
     if (!this._hass?.states?.[e]) {
       const lists = Object.keys(this._hass?.states || {}).filter(id => id.startsWith('todo.')).join(', ');
-      return `Einkaufsliste „${e}“ gibt es nicht. Bitte shopping_entity in der Card-Konfiguration anpassen. Vorhandene Listen: ${lists}`;
+      return `Einkaufsliste „${e}“ gibt es nicht. Bitte in den Einstellungen (Zahnrad oben) eine andere Liste wählen. Vorhandene Listen: ${lists}`;
     }
     return '';
   }
@@ -2748,7 +2911,7 @@ class AlhMealCard extends HTMLElement {
   // Lists that support descriptions (e.g. Bring!) get the amount as description,
   // so "Perl-Couscous" stays the item name and "275 g" becomes the specification.
   async _addToShopping(items) {
-    const entity = this._config.shopping_entity;
+    const entity = this._shoppingEntity();
     const SET_DESCRIPTION = 64;
     const withDesc = ((this._hass.states[entity]?.attributes?.supported_features ?? 0) & SET_DESCRIPTION) !== 0;
     for (const { name, qty } of items) {
@@ -2758,7 +2921,7 @@ class AlhMealCard extends HTMLElement {
   }
 
   async _sendToShopping() {
-    const entity = this._config.shopping_entity;
+    const entity = this._shoppingEntity();
     if (!entity) return;
     const items = this._buildShoppingList().filter(ing => {
       const key = `${ing.planUid}::${ing.name}::${ing.unit}`;
@@ -3250,6 +3413,21 @@ class AlhMealCard extends HTMLElement {
         color: #32D74B; font-size: 13px; font-weight: 600; padding: 8px 0;
       }
       .shop-success svg { width: 18px; height: 18px; fill: #32D74B; }
+      .shop-hint { margin-top: 12px; font-size: 13px; color: var(--alh-muted); display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+      .shop-hint .btn--text { color: var(--alh-accent); padding: 0; }
+      .settings__hint { margin: 6px 0 0; font-size: 12px; line-height: 1.45; color: var(--alh-muted); }
+      .pick-head { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; font-size: 14px; font-weight: 600; color: var(--alh-text); }
+      .detail-ing-list.is-pick .detail-ing-item { grid-template-columns: 22px 96px 1fr; cursor: pointer; user-select: none; }
+      .detail-ing-list.is-pick .detail-ing-item:not(.is-on) { opacity: 0.45; }
+      .pick-box {
+        width: 20px; height: 20px; border-radius: 6px; border: 2px solid var(--alh-fill-2);
+        display: flex; align-items: center; justify-content: center; box-sizing: border-box; align-self: center;
+      }
+      .is-on .pick-box { background: var(--alh-accent); border-color: var(--alh-accent); }
+      .pick-box svg { width: 14px; height: 14px; fill: #fff; }
+      .pick-actions { display: flex; gap: 8px; margin-top: 12px; }
+      .pick-actions .btn--primary { flex: 1; }
+      .pick-actions .btn:disabled { opacity: 0.5; cursor: default; }
       .shop-error {
         margin-top: 8px; font-size: 13px; line-height: 1.4;
         color: var(--error-color, #f44336);
