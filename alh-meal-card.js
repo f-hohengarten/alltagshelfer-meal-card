@@ -3008,6 +3008,7 @@ class AlhMealCard extends HTMLElement {
       .detail-meta-item svg { width: 16px; height: 16px; fill: currentColor; }
       .detail-note {
         font-size: 14px; line-height: 1.5; margin: 0;
+        white-space: pre-line;
         color: var(--secondary-text-color, currentColor); opacity: 0.8;
         font-style: italic;
       }
