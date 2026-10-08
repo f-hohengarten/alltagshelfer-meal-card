@@ -471,6 +471,7 @@ class AlhMealCard extends HTMLElement {
     window.removeEventListener('scroll', this._onViewportChange, true);
     window.removeEventListener('resize', this._onViewportChange);
     window.visualViewport?.removeEventListener('resize', this._onViewportChange);
+    this._setScrollLock(false);
     this._unsubFns.forEach(fn => fn());
     this._unsubFns = [];
   }
@@ -620,7 +621,13 @@ class AlhMealCard extends HTMLElement {
   _positionOverlay() {
     const overlay = this.shadowRoot.querySelector('.form-overlay, .detail-backdrop');
     const card    = this.shadowRoot.querySelector('.card');
+    this._setScrollLock(!!overlay);
     if (!overlay || !card) return;
+    // Wheel/touch on the dimmed backdrop must not reach the page (iOS ignores
+    // overflow:hidden); scrolling inside the modal itself stays allowed.
+    const block = (e) => { if (!e.target.closest('.detail-scroll, .form-modal')) e.preventDefault(); };
+    overlay.addEventListener('wheel', block, { passive: false });
+    overlay.addEventListener('touchmove', block, { passive: false });
     const r     = card.getBoundingClientRect();
     const viewH = window.visualViewport?.height ?? window.innerHeight;
     const top    = Math.max(0, -r.top);
@@ -628,6 +635,30 @@ class AlhMealCard extends HTMLElement {
     if (top + bottom >= r.height) return;
     overlay.style.paddingTop    = `${top + 16}px`;
     overlay.style.paddingBottom = `${bottom + 16}px`;
+  }
+
+  // Freezes every scrollable ancestor (across shadow roots) while a popup is
+  // open, so the recipe grid behind it can't be scrolled.
+  _setScrollLock(on) {
+    if (on && !this._scrollLocks) {
+      const locks = [];
+      const lock = (el) => {
+        if (!el || locks.some(l => l.el === el)) return;
+        locks.push({ el, overflow: el.style.overflow });
+        el.style.overflow = 'hidden';
+      };
+      lock(document.scrollingElement || document.documentElement);
+      lock(document.body);
+      for (let n = this.parentNode || this.getRootNode().host; n && n !== document; n = n.parentNode || n.host) {
+        if (n.nodeType !== 1) continue;
+        const oy = getComputedStyle(n).overflowY;
+        if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight) lock(n);
+      }
+      this._scrollLocks = locks;
+    } else if (!on && this._scrollLocks) {
+      this._scrollLocks.forEach(({ el, overflow }) => { el.style.overflow = overflow; });
+      this._scrollLocks = null;
+    }
   }
 
   _renderHeader() {
@@ -3194,7 +3225,7 @@ class AlhMealCard extends HTMLElement {
       }
       .form-modal {
         background: var(--ha-card-background, #1c1c1e);
-        border-radius: 20px; overflow-y: auto;
+        border-radius: 20px; overflow-y: auto; overscroll-behavior: contain;
         width: 100%; max-width: 540px; max-height: 100%;
         box-shadow: 0 24px 64px rgba(0,0,0,0.6);
         animation: slideUp 0.22s ease;
@@ -3441,7 +3472,7 @@ class AlhMealCard extends HTMLElement {
       }
       @keyframes slideUp { from { transform: translateY(16px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
 
-      .detail-scroll { overflow-y: auto; flex: 1; min-height: 0; }
+      .detail-scroll { overflow-y: auto; flex: 1; min-height: 0; overscroll-behavior: contain; }
       .detail-img-wrap { aspect-ratio: 16/9; }
       .detail-img { width: 100%; height: 100%; object-fit: cover; display: block; }
       .detail-close {
