@@ -110,6 +110,35 @@ function x(s) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// Scales an ingredient amount and formats it German-style ("1½", "0,3", "138")
+function fmtAmount(amount, scale = 1) {
+  const raw = String(amount ?? '').trim();
+  if (!raw) return '';
+  const n = parseFloat(raw.replace(',', '.'));
+  if (isNaN(n)) return raw;
+  const v = n * scale;
+  if (v >= 10) return String(Math.round(v));
+  const whole = Math.floor(v);
+  const frac  = v - whole;
+  const FRACS = [[0.25, '¼'], [0.5, '½'], [0.75, '¾'], [1 / 3, '⅓'], [2 / 3, '⅔']];
+  const hit = FRACS.find(([f]) => Math.abs(frac - f) < 0.02);
+  if (hit) return `${whole || ''}${hit[1]}`;
+  return String(Math.round(v * 10) / 10).replace('.', ',');
+}
+
+// Splits a recipe note into intro text, numbered steps ("1. …") and trailing text
+function splitNote(note) {
+  const out = { intro: [], steps: [], outro: [] };
+  for (const line of String(note ?? '').split('\n')) {
+    const t = line.trim();
+    if (!t || /^zubereitung:?$/i.test(t)) continue;
+    const m = t.match(/^(\d+)[.)]\s+(.+)$/);
+    if (m) out.steps.push(m[2]);
+    else (out.steps.length ? out.outro : out.intro).push(t);
+  }
+  return out;
+}
+
 function isoToday() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -139,7 +168,7 @@ function parseRecipeMeta(desc) {
   const imgBlockMatch = str.match(/\n\[IMG\](data:[^\n]*)/);
   const cleanStr = imgBlockMatch ? str.slice(0, str.lastIndexOf('\n[IMG]')) : str;
   const mHead = cleanStr.match(/^\[ALH ([^\]]*)\]/);
-  const meta  = { cat: 'sonstiges', score: '', srv: 4, note: '', img: '', ingredients: [] };
+  const meta  = { cat: 'sonstiges', cats: ['sonstiges'], score: '', srv: 4, note: '', img: '', ingredients: [] };
   if (imgBlockMatch) meta.img = imgBlockMatch[1];
   if (mHead) {
     mHead[1].split(';').forEach(p => {
@@ -147,6 +176,10 @@ function parseRecipeMeta(desc) {
       if (i > 0) meta[p.slice(0, i).trim()] = p.slice(i + 1).trim();
     });
     meta.srv = parseInt(meta.srv) || 4;
+    // cat holds one or more comma-separated category values ("salat,keine-zeit")
+    meta.cats = String(meta.cat || '').split(',').map(c => c.trim()).filter(Boolean);
+    if (!meta.cats.length) meta.cats = ['sonstiges'];
+    meta.cat = meta.cats[0];
     const rest = cleanStr.slice(mHead[0].length).trim();
     const pipeIdx = rest.indexOf('|');
     if (pipeIdx >= 0) {
@@ -165,8 +198,9 @@ function parseRecipeMeta(desc) {
   return meta;
 }
 
-function encodeRecipeMeta({ cat, score, srv, note, ingredients, img }) {
-  const parts = [`cat:${cat || 'sonstiges'}`, `srv:${srv || 4}`];
+function encodeRecipeMeta({ cats, cat, score, srv, note, ingredients, img }) {
+  const catList = (cats && cats.length) ? cats : [cat || 'sonstiges'];
+  const parts = [`cat:${catList.join(',')}`, `srv:${srv || 4}`];
   if (score) parts.push(`score:${score}`);
   // Only HTTP/HTTPS URLs go into the header; data URLs use the [IMG] block below
   if (img && !img.startsWith('data:')) parts.push(`img:${img}`);
@@ -285,6 +319,7 @@ class AlhMealCard extends HTMLElement {
     this._dragPlanUid     = null;
     this._recipeDetail    = null; // uid of recipe shown in detail overlay
     this._detailPlanUid   = null; // plan uid if detail opened from week view
+    this._detailSrv       = null; // servings chosen in detail view (scales ingredients)
     this._detailChanging  = false;
     this._detailChangeSearch = '';
     this._jsonImportMode  = false;
@@ -300,7 +335,7 @@ class AlhMealCard extends HTMLElement {
   _blankRecipeForm() {
     return {
       open: false, uid: null,
-      title: '', cat: 'pasta', score: '', srv: 4, note: '', img: '',
+      title: '', cats: [], score: '', srv: 4, note: '', img: '',
       ingredients: [],
       _ingName: '', _ingAmount: '', _ingUnit: 'g',
       _importUrl: '',
@@ -336,6 +371,10 @@ class AlhMealCard extends HTMLElement {
         description: desc,
       }).catch(e => console.error('[alh-meal-card] saveCategories:', e));
     }
+  }
+
+  _catLabels(meta) {
+    return meta.cats.map(v => this._categories.find(c => c.v === v)?.l ?? v).join(' · ');
   }
 
   _catBadgeStyle(catV) {
@@ -715,23 +754,28 @@ class AlhMealCard extends HTMLElement {
 
   _renderRezepte() {
     const filtered = this._filteredRecipes();
+    const total    = this._recipes.filter(r => r.status !== 'completed').length;
     return `
       <div class="rezepte">
         <div class="search-row">
-          <input class="search__input" type="search" placeholder="Rezept oder Zutat suchen…" value="${x(this._searchQuery)}" autocomplete="off" />
+          <svg class="search__icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+          <input class="search__input" type="search" placeholder="Rezept oder Zutat suchen" value="${x(this._searchQuery)}" autocomplete="off" />
         </div>
         <div class="cat-filters">
           <button class="cat-pill${this._catFilter === 'all' ? ' cat-pill--active' : ''}" data-cat="all">Alle</button>
           ${this._categories.map(c => `
-            <button class="cat-pill${this._catFilter === c.v ? ' cat-pill--active' : ''}" data-cat="${c.v}">${c.l}</button>
+            <button class="cat-pill${this._catFilter === c.v ? ' cat-pill--active' : ''}" data-cat="${c.v}">${x(c.l)}</button>
           `).join('')}
-          <button class="icon-btn icon-btn--sm cat-filters__manage" data-action="open-manage-cats"
-            aria-label="Kategorien verwalten" title="Kategorien verwalten" style="flex-shrink:0;margin-left:2px">
-            <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.22-.07.47.12.61l2.03 1.58c-.05.3-.07.63-.07.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+          <button class="cat-filters__manage" data-action="open-manage-cats"
+            aria-label="Kategorien verwalten" title="Kategorien verwalten">
+            <svg viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
           </button>
         </div>
+        <div class="rezepte__count">
+          ${filtered.length === total ? `${total} Rezepte` : `${filtered.length} von ${total} Rezepten`}
+        </div>
         ${filtered.length === 0 ? `
-          <div class="empty">Keine Rezepte gefunden.<br>Tippe auf + um ein Rezept anzulegen.</div>
+          <div class="empty">Keine Rezepte gefunden.</div>
         ` : `
           <div class="recipe-grid">
             ${filtered.map(r => this._renderRecipeCard(r)).join('')}
@@ -744,7 +788,7 @@ class AlhMealCard extends HTMLElement {
   _filteredRecipes() {
     let items = this._recipes.filter(r => r.status !== 'completed');
     if (this._catFilter !== 'all') {
-      items = items.filter(r => parseRecipeMeta(r.description).cat === this._catFilter);
+      items = items.filter(r => parseRecipeMeta(r.description).cats.includes(this._catFilter));
     }
     if (this._searchQuery.trim()) {
       const q = this._searchQuery.toLowerCase();
@@ -758,59 +802,24 @@ class AlhMealCard extends HTMLElement {
   }
 
   _renderRecipeCard(recipe) {
-    const meta     = parseRecipeMeta(recipe.description);
-    const score    = meta.score;
-    const catLabel = this._categories.find(c => c.v === meta.cat)?.l ?? meta.cat;
+    const meta  = parseRecipeMeta(recipe.description);
+    const score = meta.score;
     return `
-      <div class="recipe-card" data-action="open-detail" data-recipe-uid="${x(recipe.uid)}">
-        ${meta.img ? `
-          <div class="recipe-card__img-wrap">
-            <img class="recipe-card__img" src="${x(meta.img)}" alt="" loading="lazy"
-              onerror="this.closest('.recipe-card__img-wrap').style.display='none'" />
-            <div class="recipe-card__img-overlay">
-              <span class="cat-badge" style="${this._catBadgeStyle(meta.cat)}">${x(catLabel)}</span>
-              ${score ? `<span class="nutri-badge" style="background:${nutriColor(score)};color:${nutriTextColor(score)}">${score}</span>` : ''}
-            </div>
-            <button class="recipe-card__edit icon-btn icon-btn--sm" data-action="edit-recipe" data-recipe-uid="${x(recipe.uid)}" aria-label="Bearbeiten">
-              <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-            </button>
-            <button class="recipe-card__del icon-btn icon-btn--sm" data-action="delete-recipe-direct" data-recipe-uid="${x(recipe.uid)}" data-recipe-title="${x(recipe.summary)}" aria-label="Löschen">
-              <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-            </button>
-          </div>
-        ` : `
-          <div class="recipe-card__top">
-            <div class="recipe-card__badges">
-              <span class="cat-badge" style="${this._catBadgeStyle(meta.cat)}">${x(catLabel)}</span>
-              ${score ? `<span class="nutri-badge" style="background:${nutriColor(score)};color:${nutriTextColor(score)}">${score}</span>` : ''}
-            </div>
-            <div style="display:flex;gap:4px">
-              <button class="icon-btn icon-btn--sm" data-action="delete-recipe-direct" data-recipe-uid="${x(recipe.uid)}" data-recipe-title="${x(recipe.summary)}" aria-label="Löschen">
-                <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-              </button>
-              <button class="icon-btn icon-btn--sm" data-action="edit-recipe" data-recipe-uid="${x(recipe.uid)}" aria-label="Bearbeiten">
-                <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-              </button>
-            </div>
-          </div>
-        `}
-        <div class="recipe-card__body">
-          <div class="recipe-card__title">${x(recipe.summary)}</div>
-          <div class="recipe-card__meta">
-            <span class="recipe-card__srv">
-              <svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
-              ${meta.srv} Pers.
-            </span>
-            ${meta.ingredients.length > 0 ? `<span class="recipe-card__ings">${meta.ingredients.length} Zutaten</span>` : ''}
-          </div>
-          <div class="recipe-card__actions">
-            <button class="btn btn--primary btn--sm" data-action="plan-recipe" data-recipe-uid="${x(recipe.uid)}">
-              <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z"/></svg>
-              Einplanen
-            </button>
-          </div>
+      <article class="recipe-card" data-action="open-detail" data-recipe-uid="${x(recipe.uid)}">
+        <div class="recipe-card__media">
+          ${meta.img ? `
+            <img class="recipe-card__img" src="${x(meta.img)}" alt="" loading="lazy" onerror="this.remove()" />
+          ` : `
+            <svg class="recipe-card__ph" viewBox="0 0 24 24"><path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2.5v8H21V2c-2.76 0-5 2.24-5 4z"/></svg>
+          `}
+          ${score ? `<span class="nutri-badge recipe-card__score" style="background:${nutriColor(score)};color:${nutriTextColor(score)}" title="Nutri-Score ${score}">${score}</span>` : ''}
+          <button class="recipe-card__plan" data-action="plan-recipe" data-recipe-uid="${x(recipe.uid)}" aria-label="Einplanen" title="Einplanen">
+            <svg viewBox="0 0 24 24"><path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm-8-8h2v2.5h2.5v2H13V19h-2v-2.5H8.5v-2H11V12z"/></svg>
+          </button>
         </div>
-      </div>
+        <div class="recipe-card__title">${x(recipe.summary)}</div>
+        <div class="recipe-card__meta">${x(this._catLabels(meta))}</div>
+      </article>
     `;
   }
 
@@ -915,116 +924,132 @@ class AlhMealCard extends HTMLElement {
     const recipe = this._recipes.find(r => r.uid === this._recipeDetail);
     if (!recipe) return '';
     const meta     = parseRecipeMeta(recipe.description);
-    const catLabel = this._categories.find(c => c.v === meta.cat)?.l ?? meta.cat;
+    const planItem = this._detailPlanUid ? this._plan.find(p => p.uid === this._detailPlanUid) : null;
+    const srv      = this._detailSrv ?? (planItem ? parsePlanMeta(planItem.description).srv : meta.srv);
+    const scale    = srv / (meta.srv || 1);
+    const note     = splitNote(meta.note);
     return `
       <div class="detail-backdrop" data-action="close-detail">
-        <div class="detail-modal" role="dialog">
-          ${meta.img ? `
-            <div class="detail-img-wrap">
-              <img class="detail-img" src="${x(meta.img)}" alt="" draggable="false"
-                onerror="this.closest('.detail-img-wrap').style.display='none'" />
-              <div class="detail-img-overlay">
-                <span class="cat-badge" style="${this._catBadgeStyle(meta.cat)}">${x(catLabel)}</span>
-                ${meta.score ? `<span class="nutri-badge" style="background:${nutriColor(meta.score)};color:${nutriTextColor(meta.score)}">${meta.score}</span>` : ''}
-              </div>
-            </div>
-          ` : `
-            <div class="detail-no-img">
-              <span class="cat-badge" style="${this._catBadgeStyle(meta.cat)}">${x(catLabel)}</span>
-              ${meta.score ? `<span class="nutri-badge" style="background:${nutriColor(meta.score)};color:${nutriTextColor(meta.score)}">${meta.score}</span>` : ''}
-            </div>
-          `}
-
-          <button class="detail-close icon-btn" data-action="close-detail" aria-label="Schließen">
+        <div class="detail-modal" role="dialog" aria-label="${x(recipe.summary)}">
+          <button class="detail-close" data-action="close-detail" aria-label="Schließen">
             <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
           </button>
-
-          <div class="detail-body">
-            <h2 class="detail-title">${x(recipe.summary)}</h2>
-            <div class="detail-meta-row">
-              <span class="detail-meta-item">
-                <svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
-                ${meta.srv} Portionen
-              </span>
-              ${meta.ingredients.length > 0 ? `
-                <span class="detail-meta-item">${meta.ingredients.length} Zutaten</span>
-              ` : ''}
-            </div>
-
-            ${meta.note ? `<p class="detail-note">${x(meta.note)}</p>` : ''}
-
-            ${meta.ingredients.length > 0 ? `
-              <div class="detail-section-label">Zutaten</div>
-              <ul class="detail-ing-list">
-                ${meta.ingredients.map(ing => `
-                  <li class="detail-ing-item">
-                    <span class="detail-ing-amount">${x(ing.amount)} ${x(ing.unit)}</span>
-                    <span class="detail-ing-name">${x(ing.name)}</span>
-                  </li>
-                `).join('')}
-              </ul>
+          <div class="detail-scroll">
+            ${meta.img ? `
+              <div class="detail-img-wrap">
+                <img class="detail-img" src="${x(meta.img)}" alt="" draggable="false"
+                  onerror="this.closest('.detail-img-wrap').style.display='none'" />
+              </div>
             ` : ''}
 
-            ${this._detailChanging ? `
-              <div class="detail-change-wrap">
-                <div class="detail-section-label">Anderes Rezept wählen</div>
-                <div class="plan-recipe-search-wrap">
-                  <input class="detail-change-search form__input" type="search"
-                    placeholder="Rezept suchen…" value="${x(this._detailChangeSearch)}" autocomplete="off" />
-                  ${(() => {
-                    const q = this._detailChangeSearch.toLowerCase();
-                    if (!q) return '';
-                    const results = this._recipes
-                      .filter(r => r.status !== 'completed' && r.uid !== recipe.uid && r.summary.toLowerCase().includes(q))
-                      .slice(0, 6);
-                    if (!results.length) return '<div class="plan-recipe-dropdown"><div class="plan-recipe-option plan-recipe-option--empty">Keine Ergebnisse</div></div>';
-                    return `<div class="plan-recipe-dropdown">
-                      ${results.map(r => {
-                        const m = parseRecipeMeta(r.description);
-                        const catL = this._categories.find(c => c.v === m.cat)?.l ?? m.cat;
-                        return `<div class="detail-change-option plan-recipe-option" data-recipe-uid="${x(r.uid)}">
-                          <span class="plan-recipe-option__title">${x(r.summary)}</span>
-                          <span class="plan-recipe-option__meta">${x(catL)} · ${m.srv} Pers.</span>
-                        </div>`;
-                      }).join('')}
-                    </div>`;
-                  })()}
-                </div>
-                <div class="detail-actions" style="margin-top:8px">
-                  <button class="btn btn--ghost" data-action="toggle-detail-change">Abbrechen</button>
-                </div>
+            <div class="detail-body${meta.img ? '' : ' detail-body--no-img'}">
+              <div class="detail-eyebrow">${x(this._catLabels(meta))}</div>
+              <h2 class="detail-title">${x(recipe.summary)}</h2>
+              <div class="detail-facts">
+                ${meta.score ? `
+                  <span class="detail-fact">
+                    <span class="nutri-badge" style="background:${nutriColor(meta.score)};color:${nutriTextColor(meta.score)}">${meta.score}</span>
+                    Nutri-Score
+                  </span>` : ''}
+                ${meta.ingredients.length ? `<span class="detail-fact">${meta.ingredients.length} Zutaten</span>` : ''}
+                ${note.steps.length ? `<span class="detail-fact">${note.steps.length} Schritte</span>` : ''}
               </div>
-            ` : `
-              <div class="detail-actions">
-                ${this._detailPlanUid ? `
-                  <button class="btn btn--danger" data-action="remove-from-plan" style="margin-right:auto">
-                    <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-                    Aus Planung entfernen
-                  </button>
-                ` : `
-                  <button class="btn btn--danger" data-action="delete-recipe-direct" data-recipe-uid="${x(recipe.uid)}" data-recipe-title="${x(recipe.summary)}">
-                    <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-                    Löschen
-                  </button>
-                `}
-                <button class="btn btn--ghost" data-action="edit-recipe" data-recipe-uid="${x(recipe.uid)}">
-                  <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-                  Bearbeiten
-                </button>
-                ${this._detailPlanUid ? `
-                  <button class="btn btn--primary" data-action="toggle-detail-change">
-                    <svg viewBox="0 0 24 24"><path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z"/></svg>
-                    Gericht ändern
-                  </button>
-                ` : `
-                  <button class="btn btn--primary" data-action="plan-recipe" data-recipe-uid="${x(recipe.uid)}">
-                    <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z"/></svg>
-                    Einplanen
-                  </button>
-                `}
-              </div>
-            `}
+
+              ${note.intro.map(t => `<p class="detail-text">${x(t)}</p>`).join('')}
+
+              ${meta.ingredients.length > 0 ? `
+                <section class="detail-section">
+                  <div class="detail-section__head">
+                    <h3 class="detail-h3">Zutaten</h3>
+                    <div class="detail-srv">
+                      <button class="detail-srv__btn" data-action="detail-srv-minus" data-srv="${srv}" aria-label="Weniger Portionen"${srv <= 1 ? ' disabled' : ''}>−</button>
+                      <span class="detail-srv__val">${srv} ${srv === 1 ? 'Portion' : 'Portionen'}</span>
+                      <button class="detail-srv__btn" data-action="detail-srv-plus" data-srv="${srv}" aria-label="Mehr Portionen">+</button>
+                    </div>
+                  </div>
+                  <ul class="detail-ing-list">
+                    ${meta.ingredients.map(ing => {
+                      const amt = fmtAmount(ing.amount, scale);
+                      return `
+                        <li class="detail-ing-item">
+                          <span class="detail-ing-amount">${amt ? `${x(amt)} ${x(ing.unit)}` : ''}</span>
+                          <span class="detail-ing-name">${x(ing.name)}</span>
+                        </li>`;
+                    }).join('')}
+                  </ul>
+                </section>
+              ` : ''}
+
+              ${note.steps.length ? `
+                <section class="detail-section">
+                  <h3 class="detail-h3">Zubereitung</h3>
+                  <ol class="detail-steps">
+                    ${note.steps.map((t, i) => `
+                      <li class="detail-step">
+                        <span class="detail-step__num">${i + 1}</span>
+                        <p class="detail-step__text">${x(t)}</p>
+                      </li>
+                    `).join('')}
+                  </ol>
+                </section>
+              ` : ''}
+
+              ${note.outro.length ? `
+                <div class="detail-outro">
+                  ${note.outro.map(t => `<p class="detail-text detail-text--muted">${x(t)}</p>`).join('')}
+                </div>
+              ` : ''}
+
+              ${this._detailChanging ? `
+                <div class="detail-change-wrap">
+                  <h3 class="detail-h3">Anderes Rezept wählen</h3>
+                  <div class="plan-recipe-search-wrap">
+                    <input class="detail-change-search form__input" type="search"
+                      placeholder="Rezept suchen…" value="${x(this._detailChangeSearch)}" autocomplete="off" />
+                    ${(() => {
+                      const q = this._detailChangeSearch.toLowerCase();
+                      if (!q) return '';
+                      const results = this._recipes
+                        .filter(r => r.status !== 'completed' && r.uid !== recipe.uid && r.summary.toLowerCase().includes(q))
+                        .slice(0, 6);
+                      if (!results.length) return '<div class="plan-recipe-dropdown"><div class="plan-recipe-option plan-recipe-option--empty">Keine Ergebnisse</div></div>';
+                      return `<div class="plan-recipe-dropdown">
+                        ${results.map(r => {
+                          const m = parseRecipeMeta(r.description);
+                          const catL = this._catLabels(m);
+                          return `<div class="detail-change-option plan-recipe-option" data-recipe-uid="${x(r.uid)}">
+                            <span class="plan-recipe-option__title">${x(r.summary)}</span>
+                            <span class="plan-recipe-option__meta">${x(catL)} · ${m.srv} Pers.</span>
+                          </div>`;
+                        }).join('')}
+                      </div>`;
+                    })()}
+                  </div>
+                  <div class="detail-actions">
+                    <button class="btn btn--ghost" data-action="toggle-detail-change">Abbrechen</button>
+                  </div>
+                </div>
+              ` : ''}
+            </div>
           </div>
+
+          ${this._detailChanging ? '' : `
+            <div class="detail-footer">
+              ${this._detailPlanUid ? `
+                <button class="btn btn--text btn--text-danger" data-action="remove-from-plan">Aus Plan entfernen</button>
+              ` : `
+                <button class="icon-btn icon-btn--lg" data-action="delete-recipe-direct" data-recipe-uid="${x(recipe.uid)}" data-recipe-title="${x(recipe.summary)}" aria-label="Rezept löschen" title="Rezept löschen">
+                  <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                </button>
+              `}
+              <button class="btn btn--ghost" data-action="edit-recipe" data-recipe-uid="${x(recipe.uid)}">Bearbeiten</button>
+              ${this._detailPlanUid ? `
+                <button class="btn btn--primary detail-footer__main" data-action="toggle-detail-change">Gericht ändern</button>
+              ` : `
+                <button class="btn btn--primary detail-footer__main" data-action="plan-recipe" data-recipe-uid="${x(recipe.uid)}">Einplanen</button>
+              `}
+            </div>
+          `}
         </div>
       </div>
     `;
@@ -1117,11 +1142,14 @@ class AlhMealCard extends HTMLElement {
         <input class="form__title-input form__input" type="text" placeholder="Rezepttitel *"
           value="${x(f.title)}" autocomplete="off" />
 
-        <div class="form__section-label">Kategorie</div>
+        <div class="form__section-label">Kategorien <span class="form__hint">Mehrfachauswahl</span></div>
         <div class="picker picker--grid">
-          ${this._categories.map(c => `
-            <button class="pill${f.cat === c.v ? ' pill--on' : ''}" data-cat="${c.v}">${c.l}</button>
-          `).join('')}
+          ${this._categories.map(c => {
+            const on = f.cats.includes(c.v);
+            return `<button class="pill${on ? ' pill--on' : ''}" data-cat="${c.v}" aria-pressed="${on}">
+              ${on ? '<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>' : ''}${x(c.l)}
+            </button>`;
+          }).join('')}
         </div>
 
         <div class="form__section-label">Nutri-Score</div>
@@ -1242,7 +1270,7 @@ class AlhMealCard extends HTMLElement {
                 <div class="plan-recipe-dropdown">
                   ${results.map(r => {
                     const m = parseRecipeMeta(r.description);
-                    const catL = this._categories.find(c => c.v === m.cat)?.l ?? m.cat;
+                    const catL = this._catLabels(m);
                     return `<div class="plan-recipe-option" data-recipe-uid="${x(r.uid)}">
                       <span class="plan-recipe-option__title">${x(r.summary)}</span>
                       <span class="plan-recipe-option__meta">${x(catL)} · ${m.srv} Pers.</span>
@@ -1285,7 +1313,7 @@ class AlhMealCard extends HTMLElement {
     const exampleJson = JSON.stringify([
       {
         title: 'Spaghetti Bolognese',
-        cat: 'pasta',
+        cats: ['pasta', 'fleisch'],
         score: 'C',
         srv: 4,
         note: 'Klassiker mit Hackfleisch-Tomaten-Sauce',
@@ -1348,7 +1376,7 @@ class AlhMealCard extends HTMLElement {
     for (const r of this._recipes) {
       if (r.status === 'completed') continue;
       const meta = parseRecipeMeta(r.description);
-      recipeCounts[meta.cat] = (recipeCounts[meta.cat] || 0) + 1;
+      meta.cats.forEach(c => { recipeCounts[c] = (recipeCounts[c] || 0) + 1; });
     }
     return `
       <div class="form-overlay" data-close-panel="manage-cats">
@@ -1575,6 +1603,7 @@ class AlhMealCard extends HTMLElement {
         if (e.target.closest('[data-action="edit-recipe"],[data-action="plan-recipe"],[data-action="delete-recipe-direct"]')) return;
         this._recipeDetail = el.dataset.recipeUid;
         this._detailPlanUid = null;
+        this._detailSrv = null;
         this._detailChanging = false;
         this._detailChangeSearch = '';
         this._render();
@@ -1589,6 +1618,7 @@ class AlhMealCard extends HTMLElement {
         if (!recipeUid) return;
         this._recipeDetail = recipeUid;
         this._detailPlanUid = el.dataset.planUid;
+        this._detailSrv = null;
         this._detailChanging = false;
         this._detailChangeSearch = '';
         this._render();
@@ -1600,8 +1630,18 @@ class AlhMealCard extends HTMLElement {
         if (e.target !== el && !el.classList.contains('detail-close')) return;
         this._recipeDetail = null;
         this._detailPlanUid = null;
+        this._detailSrv = null;
         this._detailChanging = false;
         this._detailChangeSearch = '';
+        this._render();
+      });
+    });
+
+    root.querySelectorAll('[data-action="detail-srv-minus"],[data-action="detail-srv-plus"]').forEach(el => {
+      el.addEventListener('click', () => {
+        const cur = Number(el.dataset.srv) || 1;
+        const next = el.dataset.action === 'detail-srv-plus' ? cur + 1 : cur - 1;
+        this._detailSrv = Math.max(1, Math.min(20, next));
         this._render();
       });
     });
@@ -1696,9 +1736,12 @@ class AlhMealCard extends HTMLElement {
 
     // Plan recipe from recipe card
     root.querySelectorAll('[data-action="plan-recipe"]').forEach(el => {
-      el.addEventListener('click', () => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const srv = this._recipeDetail ? this._detailSrv : null;
         this._recipeDetail = null;
-        this._openPlanForm('', el.dataset.recipeUid);
+        this._detailSrv    = null;
+        this._openPlanForm('', el.dataset.recipeUid, 'mittag', srv);
       });
     });
 
@@ -1754,7 +1797,13 @@ class AlhMealCard extends HTMLElement {
     root.querySelectorAll('[data-cat]').forEach(el => {
       el.addEventListener('click', () => {
         if (this._activePanel === 'recipe-form') {
-          this._recipeForm.cat = el.dataset.cat;
+          const v = el.dataset.cat;
+          let cats = this._recipeForm.cats.includes(v)
+            ? this._recipeForm.cats.filter(c => c !== v)
+            : [...this._recipeForm.cats, v];
+          // "Sonstiges" is only a fallback — drop it once a real category is picked
+          if (v !== 'sonstiges' && cats.length > 1) cats = cats.filter(c => c !== 'sonstiges');
+          this._recipeForm.cats = cats;
         } else {
           this._catFilter = el.dataset.cat;
         }
@@ -2020,7 +2069,7 @@ class AlhMealCard extends HTMLElement {
         if (!v || v === 'sonstiges') return;
         const cat = this._categories.find(c => c.v === v);
         if (!cat) return;
-        const count = this._recipes.filter(r => r.status !== 'completed' && parseRecipeMeta(r.description).cat === v).length;
+        const count = this._recipes.filter(r => r.status !== 'completed' && parseRecipeMeta(r.description).cats.includes(v)).length;
         const msg = count > 0
           ? `„${cat.l}" wirklich löschen?\n${count} Rezept${count !== 1 ? 'e' : ''} ${count !== 1 ? 'nutzen' : 'nutzt'} diese Kategorie (die Rezepte bleiben erhalten, zeigen dann den Rohwert als Label).`
           : `„${cat.l}" wirklich löschen?`;
@@ -2069,7 +2118,7 @@ class AlhMealCard extends HTMLElement {
     }
     dropdown.innerHTML = results.map(r => {
       const m = parseRecipeMeta(r.description);
-      const catL = this._categories.find(c => c.v === m.cat)?.l ?? m.cat;
+      const catL = this._catLabels(m);
       return `<div class="plan-recipe-option" data-recipe-uid="${x(r.uid)}">
         <span class="plan-recipe-option__title">${x(r.summary)}</span>
         <span class="plan-recipe-option__meta">${x(catL)} · ${m.srv} Pers.</span>
@@ -2118,7 +2167,7 @@ class AlhMealCard extends HTMLElement {
     this._recipeForm = {
       open: true, uid,
       title: recipe.summary,
-      cat:   meta.cat || 'sonstiges',
+      cats:  [...meta.cats],
       score: meta.score || '',
       srv:   meta.srv || 4,
       note:  meta.note || '',
@@ -2130,9 +2179,10 @@ class AlhMealCard extends HTMLElement {
     this._render();
   }
 
-  _openPlanForm(dayIso, recipeUid = '', slot = 'mittag') {
+  _openPlanForm(dayIso, recipeUid = '', slot = 'mittag', srvOverride = null) {
     let srv = 4;
-    if (recipeUid) {
+    if (srvOverride) srv = srvOverride;
+    else if (recipeUid) {
       const r = this._recipes.find(r => r.uid === recipeUid);
       if (r) srv = parseRecipeMeta(r.description).srv || 4;
     }
@@ -2174,8 +2224,9 @@ class AlhMealCard extends HTMLElement {
     }
     if (noteEl) this._recipeForm.note = noteEl.value;
 
-    const { uid, cat, score, srv, note, ingredients, img } = this._recipeForm;
-    const desc = encodeRecipeMeta({ cat, score, srv, note, ingredients, img });
+    const { uid, score, srv, note, ingredients, img } = this._recipeForm;
+    const cats = this._recipeForm.cats.length ? this._recipeForm.cats : ['sonstiges'];
+    const desc = encodeRecipeMeta({ cats, score, srv, note, ingredients, img });
 
     if (uid) {
       this._svc(this._config.recipe_entity, 'update_item', { item: uid, rename: title, description: desc });
@@ -2229,7 +2280,9 @@ class AlhMealCard extends HTMLElement {
       const title = String(r.title ?? '').trim();
       if (!title) { errors.push(`Eintrag ${i + 1}: "title" fehlt.`); continue; }
 
-      const cat   = validCats.includes(r.cat) ? r.cat : 'sonstiges';
+      const rawCats = Array.isArray(r.cats) ? r.cats : String(r.cat ?? '').split(',');
+      const cats    = rawCats.map(c => String(c).trim()).filter(c => validCats.includes(c));
+      if (!cats.length) cats.push('sonstiges');
       const score = 'ABCDE'.includes(String(r.score ?? '').toUpperCase())
         ? String(r.score).toUpperCase() : '';
       const srv   = parseInt(r.srv) || 4;
@@ -2244,7 +2297,7 @@ class AlhMealCard extends HTMLElement {
           })).filter(ing => ing.name)
         : [];
 
-      const desc = encodeRecipeMeta({ cat, score, srv, note, ingredients, img });
+      const desc = encodeRecipeMeta({ cats, score, srv, note, ingredients, img });
       await this._svc(this._config.recipe_entity, 'add_item', { item: title, description: desc });
       count++;
     }
@@ -2365,6 +2418,13 @@ class AlhMealCard extends HTMLElement {
         font-family: var(--primary-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
         height: 100%; display: flex; flex-direction: column;
         position: relative;
+        --alh-bg:     var(--ha-card-background, var(--card-background-color, #1c1c1e));
+        --alh-text:   var(--primary-text-color, #e8e8e8);
+        --alh-muted:  var(--secondary-text-color, #9a9a9a);
+        --alh-fill:   rgba(128,128,128,0.12);
+        --alh-fill-2: rgba(128,128,128,0.2);
+        --alh-line:   rgba(128,128,128,0.16);
+        --alh-accent: var(--primary-color, #0A84FF);
       }
 
       /* ── Header ── */
@@ -2409,40 +2469,39 @@ class AlhMealCard extends HTMLElement {
       .add-btn svg { width: 17px; height: 17px; fill: #fff; }
 
       .btn {
-        padding: 8px 16px; border-radius: 8px;
-        font-size: 13px; font-weight: 600; font-family: inherit;
-        cursor: pointer; border: none; transition: all 0.15s;
-        display: inline-flex; align-items: center; gap: 6px;
+        padding: 9px 16px; border-radius: 10px;
+        font-size: 14px; font-weight: 600; font-family: inherit; line-height: 1.2;
+        cursor: pointer; border: none; transition: background 0.15s, opacity 0.15s;
+        display: inline-flex; align-items: center; justify-content: center; gap: 6px;
       }
-      .btn--primary { background: var(--primary-color,#0A84FF); color: #fff; }
-      .btn--primary:hover { opacity: 0.82; }
-      .btn--ghost {
-        background: rgba(128,128,128,0.1); color: var(--secondary-text-color,currentColor);
-        border: 1px solid rgba(128,128,128,0.18);
-      }
-      .btn--ghost:hover { background: rgba(128,128,128,0.18); }
+      .btn--primary { background: var(--alh-accent); color: #fff; }
+      .btn--primary:hover { opacity: 0.88; }
+      .btn--ghost { background: var(--alh-fill); color: var(--alh-text); }
+      .btn--ghost:hover { background: var(--alh-fill-2); }
       .btn--danger { background: rgba(244,67,54,0.1); color: var(--error-color,#f44336); margin-right: auto; border: none; }
       .btn--danger:hover { background: rgba(244,67,54,0.2); }
-      .btn--sm { padding: 5px 10px; font-size: 12px; }
+      .btn--text { background: none; padding-left: 4px; padding-right: 4px; color: var(--alh-muted); }
+      .btn--text:hover { color: var(--alh-text); }
+      .btn--text-danger { color: var(--error-color,#f44336); }
+      .btn--text-danger:hover { color: var(--error-color,#f44336); opacity: 0.8; }
+      .btn--sm { padding: 6px 11px; font-size: 13px; border-radius: 8px; }
       .btn--loading { opacity: 0.5; pointer-events: none; }
       .btn svg { width: 15px; height: 15px; fill: currentColor; }
+      .icon-btn--lg { width: 40px; height: 40px; border-radius: 10px; background: var(--alh-fill); }
+      .icon-btn--lg svg { width: 18px; height: 18px; }
 
-      /* ── View Tabs ── */
-      .view-tabs { display: flex; gap: 6px; padding: 0 14px 12px; }
+      /* ── View Tabs (segmented control) ── */
+      .view-tabs {
+        display: flex; gap: 2px; margin: 0 14px 14px; padding: 3px;
+        background: var(--alh-fill); border-radius: 11px; width: fit-content;
+      }
       .view-tab {
-        padding: 6px 16px; border-radius: 20px;
-        border: 1px solid rgba(128,128,128,0.18);
-        background: rgba(128,128,128,0.07);
+        padding: 6px 18px; border-radius: 8px; border: none; background: transparent;
         font-size: 14px; font-weight: 500; font-family: inherit;
-        color: var(--secondary-text-color, currentColor);
-        cursor: pointer; transition: all 0.15s;
+        color: var(--alh-muted); cursor: pointer; transition: background 0.15s, color 0.15s;
       }
-      .view-tab:hover { border-color: var(--primary-color,#0A84FF); color: var(--primary-color,#0A84FF); }
-      .view-tab--active {
-        border-color: var(--primary-color,#0A84FF);
-        background: rgba(var(--rgb-primary-color,10,132,255),0.12);
-        color: var(--primary-color,#0A84FF);
-      }
+      .view-tab:hover { color: var(--alh-text); }
+      .view-tab--active { background: var(--alh-bg); color: var(--alh-text); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.25); }
 
       /* ── Empty ── */
       .empty {
@@ -2576,81 +2635,78 @@ class AlhMealCard extends HTMLElement {
       .woche__shop-label { font-size: 14px; color: var(--secondary-text-color,currentColor); opacity: 0.75; }
 
       /* ── Rezepte View ── */
-      .rezepte { padding: 0 12px 12px; }
-      .search-row { margin-bottom: 8px; }
+      .rezepte { padding: 0 14px 16px; }
+      .search-row { position: relative; margin-bottom: 10px; }
+      .search__icon {
+        position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+        width: 18px; height: 18px; fill: var(--alh-muted); opacity: 0.7; pointer-events: none;
+      }
       .search__input {
         width: 100%; box-sizing: border-box;
-        background: rgba(128,128,128,0.08);
-        border: 1px solid rgba(128,128,128,0.15); border-radius: 10px;
-        padding: 9px 14px; font-size: 14px; font-family: inherit;
-        color: var(--primary-text-color, currentColor); outline: none;
-        transition: border-color 0.15s;
+        background: var(--alh-fill); border: 1px solid transparent; border-radius: 12px;
+        padding: 10px 14px 10px 38px; font-size: 15px; font-family: inherit;
+        color: var(--alh-text); outline: none; transition: border-color 0.15s;
       }
-      .search__input::placeholder { color: var(--secondary-text-color, currentColor); opacity: 0.4; }
-      .search__input:focus { border-color: var(--primary-color, #0A84FF); }
+      .search__input::placeholder { color: var(--alh-muted); opacity: 0.7; }
+      .search__input:focus { border-color: var(--alh-line); background: var(--alh-fill-2); }
 
-      .cat-filters { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 8px; scrollbar-width: none; }
+      .cat-filters {
+        display: flex; gap: 6px; overflow-x: auto; margin: 0 -14px; padding: 0 14px;
+        scrollbar-width: none;
+      }
       .cat-filters::-webkit-scrollbar { display: none; }
       .cat-pill {
-        padding: 4px 12px; border-radius: 20px; white-space: nowrap;
-        border: 1px solid rgba(128,128,128,0.18); background: rgba(128,128,128,0.07);
-        font-size: 12px; font-weight: 500; font-family: inherit;
-        color: var(--secondary-text-color, currentColor); cursor: pointer; transition: all 0.15s;
+        padding: 7px 14px; border-radius: 999px; white-space: nowrap; border: none;
+        background: var(--alh-fill); font-size: 13px; font-weight: 500; font-family: inherit;
+        color: var(--alh-text); cursor: pointer; transition: background 0.15s;
       }
-      .cat-pill:hover { border-color: var(--primary-color,#0A84FF); color: var(--primary-color,#0A84FF); }
-      .cat-pill--active {
-        border-color: var(--primary-color,#0A84FF);
-        background: rgba(var(--rgb-primary-color,10,132,255),0.12);
-        color: var(--primary-color,#0A84FF);
+      .cat-pill:hover { background: var(--alh-fill-2); }
+      .cat-pill--active, .cat-pill--active:hover { background: var(--alh-text); color: var(--alh-bg); }
+      .cat-filters__manage {
+        flex-shrink: 0; width: 34px; border-radius: 999px; border: none; cursor: pointer;
+        background: transparent; display: flex; align-items: center; justify-content: center;
       }
+      .cat-filters__manage svg { width: 18px; height: 18px; fill: var(--alh-muted); }
+      .cat-filters__manage:hover { background: var(--alh-fill); }
+
+      .rezepte__count { font-size: 13px; color: var(--alh-muted); margin: 14px 0 10px; }
 
       .recipe-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-        gap: 10px;
+        grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+        gap: 18px 12px;
       }
 
-      .recipe-card {
-        background: rgba(128,128,128,0.05); border-radius: 16px;
-        border: 1px solid rgba(128,128,128,0.1);
-        display: flex; flex-direction: column; overflow: hidden;
-        transition: transform 0.15s, box-shadow 0.15s;
-      }
-      .recipe-card:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(0,0,0,0.2); }
-
-      .recipe-card__img-wrap {
-        position: relative; aspect-ratio: 16/9; overflow: hidden; flex-shrink: 0;
+      .recipe-card { display: flex; flex-direction: column; gap: 4px; cursor: pointer; min-width: 0; }
+      .recipe-card__media {
+        position: relative; aspect-ratio: 4/3; border-radius: 12px; overflow: hidden;
+        background: var(--alh-fill); margin-bottom: 6px;
+        display: flex; align-items: center; justify-content: center;
       }
       .recipe-card__img {
-        width: 100%; height: 100%; object-fit: cover; display: block;
+        position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block;
+        transition: transform 0.3s ease;
       }
-      .recipe-card__img-overlay {
-        position: absolute; top: 7px; left: 7px; display: flex; gap: 4px; flex-wrap: wrap;
+      .recipe-card:hover .recipe-card__img { transform: scale(1.03); }
+      .recipe-card__ph { width: 34px; height: 34px; fill: var(--alh-muted); opacity: 0.35; }
+      .recipe-card__score { position: absolute; left: 8px; bottom: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
+      .recipe-card__plan {
+        position: absolute; top: 8px; right: 8px;
+        width: 34px; height: 34px; border-radius: 50%; border: none; cursor: pointer; padding: 0;
+        background: rgba(0,0,0,0.45); backdrop-filter: blur(6px);
+        display: flex; align-items: center; justify-content: center;
+        transition: background 0.15s;
       }
-      .recipe-card__edit {
-        position: absolute; top: 7px; right: 7px;
-        background: rgba(0,0,0,0.45); backdrop-filter: blur(4px);
-      }
-      .recipe-card__edit svg { fill: #fff; opacity: 0.9; }
-
-      .recipe-card__top { display: flex; align-items: flex-start; justify-content: space-between; gap: 4px; padding: 10px 10px 0; }
-      .recipe-card__badges { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
-
-      .recipe-card__body { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+      .recipe-card__plan svg { width: 17px; height: 17px; fill: #fff; }
+      .recipe-card__plan:hover { background: var(--alh-accent); }
       .recipe-card__title {
-        font-size: 13px; font-weight: 600; line-height: 1.35;
-        color: var(--primary-text-color, currentColor); word-break: break-word;
+        font-size: 15px; font-weight: 600; line-height: 1.3; color: var(--alh-text);
+        overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
       }
-      .recipe-card__meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-      .recipe-card__srv {
-        display: flex; align-items: center; gap: 3px;
-        font-size: 11px; color: var(--secondary-text-color,currentColor); opacity: 0.65;
+      .recipe-card__meta {
+        font-size: 13px; color: var(--alh-muted);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       }
-      .recipe-card__srv svg { width: 12px; height: 12px; fill: currentColor; }
-      .recipe-card__ings {
-        font-size: 11px; color: var(--secondary-text-color,currentColor); opacity: 0.5;
-      }
-      .recipe-card__actions { margin-top: auto; padding-top: 4px; }
 
       /* ── Plan search dropdown ── */
       .plan-recipe-search-wrap { }
@@ -2789,6 +2845,7 @@ class AlhMealCard extends HTMLElement {
         margin: 12px 0 6px;
       }
       .form__section-label:first-of-type { margin-top: 0; }
+      .form__hint { text-transform: none; letter-spacing: 0; font-weight: 500; margin-left: 4px; opacity: 0.8; }
 
       .form__input {
         width: 100%; box-sizing: border-box;
@@ -2823,31 +2880,30 @@ class AlhMealCard extends HTMLElement {
       .form__note:focus, .import-paste-textarea:focus { border-color: var(--primary-color, #0A84FF); }
 
       .form__actions {
-        display: flex; gap: 8px; margin-top: 14px; justify-content: flex-end; align-items: center;
+        display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; align-items: center;
+        position: sticky; bottom: -24px; margin-bottom: -24px; padding: 12px 0 20px;
+        background: var(--alh-bg); border-top: 1px solid var(--alh-line);
       }
 
       /* ── Picker / Pills ── */
       .picker--grid { display: flex; flex-wrap: wrap; gap: 6px; }
       .pill {
-        padding: 5px 12px; border-radius: 20px;
-        border: 1px solid rgba(128,128,128,0.2); background: rgba(128,128,128,0.07);
-        font-size: 12px; font-weight: 500; font-family: inherit;
-        color: var(--secondary-text-color, currentColor);
-        cursor: pointer; transition: all 0.15s; white-space: nowrap;
+        padding: 7px 13px; border-radius: 999px; border: none;
+        background: var(--alh-fill); color: var(--alh-text);
+        font-size: 13px; font-weight: 500; font-family: inherit;
+        cursor: pointer; transition: background 0.15s; white-space: nowrap;
+        display: inline-flex; align-items: center; gap: 4px;
       }
-      .pill:hover { border-color: var(--primary-color,#0A84FF); color: var(--primary-color,#0A84FF); }
-      .pill--on {
-        border-color: var(--primary-color,#0A84FF);
-        background: rgba(var(--rgb-primary-color,10,132,255),0.15);
-        color: var(--primary-color,#0A84FF);
-      }
+      .pill:hover { background: var(--alh-fill-2); }
+      .pill svg { width: 14px; height: 14px; fill: currentColor; margin-left: -2px; }
+      .pill--on, .pill--on:hover { background: var(--alh-text); color: var(--alh-bg); }
 
       /* Nutri-Score pills */
-      .nutri-pill--A.pill--on { border-color: #038141; background: rgba(3,129,65,0.12);   color: #038141; }
-      .nutri-pill--B.pill--on { border-color: #85BB2F; background: rgba(133,187,47,0.12); color: #85BB2F; }
-      .nutri-pill--C.pill--on { border-color: #c4a000; background: rgba(254,203,2,0.12);  color: #c4a000; }
-      .nutri-pill--D.pill--on { border-color: #EE8100; background: rgba(238,129,0,0.12);  color: #EE8100; }
-      .nutri-pill--E.pill--on { border-color: #E63312; background: rgba(230,51,18,0.12);  color: #E63312; }
+      .nutri-pill--A.pill--on { background: #038141; color: #fff; }
+      .nutri-pill--B.pill--on { background: #85BB2F; color: #fff; }
+      .nutri-pill--C.pill--on { background: #FECB02; color: #1a1a1a; }
+      .nutri-pill--D.pill--on { background: #EE8100; color: #fff; }
+      .nutri-pill--E.pill--on { background: #E63312; color: #fff; }
 
       /* ── Ingredient list ── */
       .ing-list { list-style: none; margin: 0 0 6px; padding: 0; display: flex; flex-direction: column; gap: 3px; }
@@ -2912,9 +2968,6 @@ class AlhMealCard extends HTMLElement {
         max-width: 100%; max-height: 160px; border-radius: 8px; object-fit: cover;
         border: 1px solid rgba(128,128,128,0.2);
       }
-      .recipe-card__del {
-        position: absolute; bottom: 3px; right: 3px;
-      }
 
       /* ── JSON Import ── */
       .json-import__textarea {
@@ -2959,7 +3012,7 @@ class AlhMealCard extends HTMLElement {
       /* ── Recipe Detail Overlay ── */
       .detail-backdrop {
         position: absolute; inset: 0; z-index: 9999;
-        background: rgba(0,0,0,0.75); backdrop-filter: blur(6px);
+        background: rgba(0,0,0,0.7); backdrop-filter: blur(6px);
         display: flex; align-items: center; justify-content: center;
         padding: 16px;
         animation: fadeIn 0.18s ease;
@@ -2968,74 +3021,88 @@ class AlhMealCard extends HTMLElement {
       @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
 
       .detail-modal {
-        background: var(--ha-card-background, #1c1c1e);
+        background: var(--alh-bg);
         border-radius: 20px; overflow: hidden;
-        width: 100%; max-width: 560px; max-height: 100%;
+        width: 100%; max-width: 600px; max-height: 100%;
         display: flex; flex-direction: column;
-        box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+        box-shadow: 0 24px 64px rgba(0,0,0,0.5);
         animation: slideUp 0.2s ease;
         position: relative;
       }
       @keyframes slideUp { from { transform: translateY(16px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
 
-      .detail-img-wrap { position: relative; aspect-ratio: 16/9; flex-shrink: 0; }
+      .detail-scroll { overflow-y: auto; flex: 1; min-height: 0; }
+      .detail-img-wrap { aspect-ratio: 16/9; }
       .detail-img { width: 100%; height: 100%; object-fit: cover; display: block; }
-      .detail-img-overlay {
-        position: absolute; bottom: 10px; left: 12px; display: flex; gap: 6px; align-items: center;
-      }
-      .detail-no-img {
-        padding: 20px 16px 0; display: flex; gap: 6px; align-items: center; flex-shrink: 0;
-      }
       .detail-close {
-        position: absolute; top: 10px; right: 10px; z-index: 1;
-        background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);
+        position: absolute; top: 12px; right: 12px; z-index: 2;
+        width: 34px; height: 34px; border-radius: 50%; border: none; padding: 0; cursor: pointer;
+        background: rgba(0,0,0,0.45); backdrop-filter: blur(6px);
+        display: flex; align-items: center; justify-content: center;
       }
-      .detail-close svg { fill: #fff; opacity: 1; }
+      .detail-close svg { width: 18px; height: 18px; fill: #fff; }
 
-      .detail-body {
-        padding: 16px 20px 20px; overflow-y: auto; flex: 1;
-        display: flex; flex-direction: column; gap: 10px;
+      .detail-body { padding: 20px 22px 24px; display: flex; flex-direction: column; }
+      .detail-body--no-img { padding-top: 22px; }
+      .detail-body--no-img .detail-eyebrow, .detail-body--no-img .detail-title { padding-right: 44px; }
+      .detail-eyebrow {
+        font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+        color: var(--alh-muted); margin-bottom: 6px;
       }
       .detail-title {
-        font-size: 20px; font-weight: 700; line-height: 1.25; margin: 0;
-        color: var(--primary-text-color, currentColor);
+        font-size: 24px; font-weight: 700; line-height: 1.2; margin: 0; letter-spacing: -0.01em;
+        color: var(--alh-text);
       }
-      .detail-meta-row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
-      .detail-meta-item {
-        display: flex; align-items: center; gap: 5px;
-        font-size: 14px; color: var(--secondary-text-color, currentColor); opacity: 0.7;
+      .detail-facts {
+        display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px;
+        font-size: 14px; color: var(--alh-muted);
       }
-      .detail-meta-item svg { width: 16px; height: 16px; fill: currentColor; }
-      .detail-note {
-        font-size: 14px; line-height: 1.5; margin: 0;
-        white-space: pre-line;
-        color: var(--secondary-text-color, currentColor); opacity: 0.8;
-        font-style: italic;
-      }
-      .detail-section-label {
-        font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
-        color: var(--secondary-text-color, currentColor); opacity: 0.5;
-        margin-top: 4px;
-      }
-      .detail-ing-list {
-        list-style: none; margin: 0; padding: 0;
-        display: flex; flex-direction: column; gap: 2px;
-      }
-      .detail-ing-item {
-        display: flex; align-items: baseline; gap: 10px;
-        padding: 6px 10px; border-radius: 8px;
-        background: rgba(128,128,128,0.05);
-      }
-      .detail-ing-amount {
-        font-size: 13px; font-weight: 600; min-width: 70px; flex-shrink: 0;
-        color: var(--primary-color, #0A84FF);
-      }
-      .detail-ing-name { font-size: 14px; color: var(--primary-text-color, currentColor); }
-      .detail-actions {
-        display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px;
-      }
+      .detail-fact { display: inline-flex; align-items: center; gap: 6px; }
+      .detail-text { font-size: 15px; line-height: 1.55; margin: 14px 0 0; color: var(--alh-text); }
+      .detail-text--muted { color: var(--alh-muted); font-size: 14px; margin-top: 6px; }
+      .detail-outro { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--alh-line); }
 
-      .detail-change-wrap { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+      .detail-section { margin-top: 26px; }
+      .detail-section__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .detail-h3 { font-size: 18px; font-weight: 700; margin: 0; color: var(--alh-text); }
+      .detail-srv {
+        display: flex; align-items: center; gap: 2px;
+        background: var(--alh-fill); border-radius: 999px; padding: 3px;
+      }
+      .detail-srv__btn {
+        width: 30px; height: 30px; border-radius: 50%; border: none; cursor: pointer;
+        background: transparent; color: var(--alh-text); font-size: 18px; line-height: 1; font-family: inherit;
+      }
+      .detail-srv__btn:hover:not(:disabled) { background: var(--alh-fill-2); }
+      .detail-srv__btn:disabled { opacity: 0.3; cursor: default; }
+      .detail-srv__val { font-size: 14px; font-weight: 600; color: var(--alh-text); min-width: 92px; text-align: center; }
+
+      .detail-ing-list { list-style: none; margin: 10px 0 0; padding: 0; }
+      .detail-ing-item {
+        display: grid; grid-template-columns: 96px 1fr; gap: 12px; align-items: baseline;
+        padding: 10px 0; border-bottom: 1px solid var(--alh-line);
+      }
+      .detail-ing-item:last-child { border-bottom: none; }
+      .detail-ing-amount { font-size: 15px; font-weight: 600; color: var(--alh-text); font-variant-numeric: tabular-nums; }
+      .detail-ing-name { font-size: 15px; color: var(--alh-text); }
+
+      .detail-steps { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 16px; }
+      .detail-step { display: grid; grid-template-columns: 28px 1fr; gap: 12px; align-items: start; }
+      .detail-step__num {
+        width: 28px; height: 28px; border-radius: 50%;
+        background: var(--alh-text); color: var(--alh-bg);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 13px; font-weight: 700;
+      }
+      .detail-step__text { margin: 3px 0 0; font-size: 15px; line-height: 1.55; color: var(--alh-text); }
+
+      .detail-footer {
+        display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+        padding: 12px 16px; border-top: 1px solid var(--alh-line); background: var(--alh-bg);
+      }
+      .detail-footer__main { margin-left: auto; padding-left: 22px; padding-right: 22px; }
+      .detail-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+      .detail-change-wrap { display: flex; flex-direction: column; gap: 10px; margin-top: 24px; }
 
       /* ── Manage Categories ── */
       .cat-manage-list { display: flex; flex-direction: column; gap: 4px; }
