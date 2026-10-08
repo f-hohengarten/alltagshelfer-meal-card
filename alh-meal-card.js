@@ -322,6 +322,7 @@ class AlhMealCard extends HTMLElement {
     this._cookDone      = new Set(); // 'i:<idx>' / 's:<idx>' checked off in cook mode
     this._wakeLock      = null;
     this._detailShop    = '';   // '' | 'busy' | 'done'
+    this._shopError     = '';   // shown under the shopping buttons
     this._searchQuery   = '';
 
     this._activePanel   = null; // 'recipe-form' | 'plan-form' | null
@@ -1005,12 +1006,13 @@ class AlhMealCard extends HTMLElement {
                     Zur Einkaufsliste hinzugefügt!
                   </div>
                 ` : `
-                  <button class="btn btn--primary" data-action="send-shopping">
+                  <button class="btn btn--primary" data-action="send-shopping"${this._shopBusy ? ' disabled' : ''}>
                     <svg viewBox="0 0 24 24"><path d="M17 12h-5v5h5v-5zM16 1v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-1V1h-2zm3 18H5V8h14v11z"/></svg>
-                    Zur Einkaufsliste hinzufügen
+                    ${this._shopBusy ? 'Wird hinzugefügt…' : 'Zur Einkaufsliste hinzufügen'}
                   </button>
                 `}
               </div>
+              ${this._shopError ? `<div class="shop-error">${x(this._shopError)}</div>` : ''}
             ` : ''}
           `}
         ` : ''}
@@ -1083,10 +1085,11 @@ class AlhMealCard extends HTMLElement {
                     }).join('')}
                   </ul>
                   ${this._config.shopping_entity && !cook ? `
-                    <button class="btn btn--ghost detail-shop-btn" data-action="detail-to-shop" data-srv="${srv}"${this._detailShop ? ' disabled' : ''}>
+                    <button class="btn btn--ghost detail-shop-btn" data-action="detail-to-shop" data-srv="${srv}"${this._detailShop === 'busy' || this._detailShop === 'done' ? ' disabled' : ''}>
                       <svg viewBox="0 0 24 24"><path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1.003 1.003 0 0 0 20 4H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/></svg>
                       ${this._detailShop === 'done' ? 'Auf der Einkaufsliste' : this._detailShop === 'busy' ? 'Wird hinzugefügt…' : `Zutaten für ${srv} ${srv === 1 ? 'Portion' : 'Portionen'} auf die Einkaufsliste`}
                     </button>
+                    ${this._shopError ? `<div class="shop-error">${x(this._shopError)}</div>` : ''}
                   ` : ''}
                 </section>
               ` : ''}
@@ -1213,7 +1216,8 @@ class AlhMealCard extends HTMLElement {
     }
     return Array.from(agg.values()).map(ing => {
       const amt = Math.round(ing.amount * 10) / 10;
-      return { ...ing, amount: amt, label: `${amt} ${ing.unit} ${ing.name}` };
+      const qty = amt > 0 ? `${fmtAmount(amt)} ${ing.unit}`.trim() : '';
+      return { ...ing, amount: amt, qty, label: [qty, ing.name].filter(Boolean).join(' ') };
     });
   }
 
@@ -2573,21 +2577,23 @@ class AlhMealCard extends HTMLElement {
   async _sendRecipeToShopping(uid, srv) {
     const entity = this._config.shopping_entity;
     const recipe = this._recipes.find(r => r.uid === uid);
-    if (!entity || !recipe || this._detailShop) return;
+    if (!entity || !recipe || this._detailShop === 'busy' || this._detailShop === 'done') return;
+    this._shopError = this._shoppingConfigError();
+    if (this._shopError) { this._render(); return; }
     const meta  = parseRecipeMeta(recipe.description);
     const scale = srv / (meta.srv || 1);
     this._detailShop = 'busy';
     this._render();
     try {
-      for (const ing of meta.ingredients) {
-        const label = [fmtAmount(ing.amount, scale), fmtAmount(ing.amount, scale) ? ing.unit : '', ing.name]
-          .filter(Boolean).join(' ');
-        await this._svc(entity, 'add_item', { item: label });
-      }
+      await this._addToShopping(meta.ingredients.map(ing => {
+        const amt = fmtAmount(ing.amount, scale);
+        return { name: ing.name, qty: amt ? `${amt} ${ing.unit}`.trim() : '' };
+      }));
       this._detailShop = 'done';
     } catch (e) {
       console.error('[alh-meal-card] sendRecipeToShopping:', e);
       this._detailShop = '';
+      this._shopError = `Hinzufügen fehlgeschlagen: ${e?.message || e}`;
     }
     this._render();
   }
@@ -2604,6 +2610,7 @@ class AlhMealCard extends HTMLElement {
     this._cookMode   = false;
     this._cookDone   = new Set();
     this._detailShop = '';
+    this._shopError  = '';
   }
 
   // Keeps the screen on in cook mode (needs HTTPS; silently skipped otherwise)
@@ -2728,6 +2735,28 @@ class AlhMealCard extends HTMLElement {
     this._render();
   }
 
+  _shoppingConfigError() {
+    const e = this._config.shopping_entity;
+    if (!e) return 'Keine Einkaufsliste konfiguriert (shopping_entity).';
+    if (!this._hass?.states?.[e]) {
+      const lists = Object.keys(this._hass?.states || {}).filter(id => id.startsWith('todo.')).join(', ');
+      return `Einkaufsliste „${e}“ gibt es nicht. Bitte shopping_entity in der Card-Konfiguration anpassen. Vorhandene Listen: ${lists}`;
+    }
+    return '';
+  }
+
+  // Lists that support descriptions (e.g. Bring!) get the amount as description,
+  // so "Perl-Couscous" stays the item name and "275 g" becomes the specification.
+  async _addToShopping(items) {
+    const entity = this._config.shopping_entity;
+    const SET_DESCRIPTION = 64;
+    const withDesc = ((this._hass.states[entity]?.attributes?.supported_features ?? 0) & SET_DESCRIPTION) !== 0;
+    for (const { name, qty } of items) {
+      const data = withDesc && qty ? { item: name, description: qty } : { item: [qty, name].filter(Boolean).join(' ') };
+      await this._svc(entity, 'add_item', data);
+    }
+  }
+
   async _sendToShopping() {
     const entity = this._config.shopping_entity;
     if (!entity) return;
@@ -2735,11 +2764,19 @@ class AlhMealCard extends HTMLElement {
       const key = `${ing.planUid}::${ing.name}::${ing.unit}`;
       return !this._shopDeselected.has(key);
     });
-    if (!items.length) return;
-    for (const item of items) {
-      await this._svc(entity, 'add_item', { item: `${item.amount} ${item.unit} ${item.name}` });
+    if (!items.length || this._shopBusy) return;
+    this._shopError = this._shoppingConfigError();
+    if (this._shopError) { this._render(); return; }
+    this._shopBusy = true;
+    this._render();
+    try {
+      await this._addToShopping(items.map(i => ({ name: i.name, qty: i.qty })));
+      this._shopSuccess = true;
+    } catch (e) {
+      console.error('[alh-meal-card] sendToShopping:', e);
+      this._shopError = `Hinzufügen fehlgeschlagen: ${e?.message || e}`;
     }
-    this._shopSuccess = true;
+    this._shopBusy = false;
     this._render();
     setTimeout(() => { this._shopSuccess = false; this._render(); }, 3000);
   }
@@ -3213,6 +3250,10 @@ class AlhMealCard extends HTMLElement {
         color: #32D74B; font-size: 13px; font-weight: 600; padding: 8px 0;
       }
       .shop-success svg { width: 18px; height: 18px; fill: #32D74B; }
+      .shop-error {
+        margin-top: 8px; font-size: 13px; line-height: 1.4;
+        color: var(--error-color, #f44336);
+      }
 
       /* ── Form Modal Overlay ── */
       .form-overlay {
