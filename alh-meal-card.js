@@ -254,6 +254,13 @@ class AlhMealCard extends HTMLElement {
     this._config   = { recipe_entity: '', plan_entity: '', shopping_entity: '', title: 'Mahlzeitenplaner' };
     this._hass     = null;
     this._unsubFns = [];
+    this._onViewportChange = () => {
+      if (this._overlayRaf) return;
+      this._overlayRaf = requestAnimationFrame(() => {
+        this._overlayRaf = null;
+        this._positionOverlay();
+      });
+    };
 
     this._view          = localStorage.getItem('alh-meal-view') || 'woche';
     this._weekOffset    = 0;
@@ -390,12 +397,18 @@ class AlhMealCard extends HTMLElement {
   }
 
   connectedCallback() {
+    window.addEventListener('scroll', this._onViewportChange, true);
+    window.addEventListener('resize', this._onViewportChange);
+    window.visualViewport?.addEventListener('resize', this._onViewportChange);
     if (this._hass && this._config.recipe_entity && this._unsubFns.length === 0) {
       this._subscribe();
     }
   }
 
   disconnectedCallback() {
+    window.removeEventListener('scroll', this._onViewportChange, true);
+    window.removeEventListener('resize', this._onViewportChange);
+    window.visualViewport?.removeEventListener('resize', this._onViewportChange);
     this._unsubFns.forEach(fn => fn());
     this._unsubFns = [];
   }
@@ -513,6 +526,24 @@ class AlhMealCard extends HTMLElement {
     `;
     this._bind();
     this._restoreFocus();
+    this._positionOverlay();
+  }
+
+  // Overlays are position:absolute relative to the card (position:fixed is
+  // clipped by HA's contain context). On tall cards (mobile) the card is much
+  // higher than the viewport, so we pad the overlay to the visible slice of
+  // the card — the modal is then centered on screen instead of mid-card.
+  _positionOverlay() {
+    const overlay = this.shadowRoot.querySelector('.form-overlay, .detail-backdrop');
+    const card    = this.shadowRoot.querySelector('.card');
+    if (!overlay || !card) return;
+    const r     = card.getBoundingClientRect();
+    const viewH = window.visualViewport?.height ?? window.innerHeight;
+    const top    = Math.max(0, -r.top);
+    const bottom = Math.max(0, r.bottom - viewH);
+    if (top + bottom >= r.height) return;
+    overlay.style.paddingTop    = `${top + 16}px`;
+    overlay.style.paddingBottom = `${bottom + 16}px`;
   }
 
   _renderHeader() {
@@ -2939,7 +2970,7 @@ class AlhMealCard extends HTMLElement {
       .detail-modal {
         background: var(--ha-card-background, #1c1c1e);
         border-radius: 20px; overflow: hidden;
-        width: 100%; max-width: 560px; max-height: 90vh;
+        width: 100%; max-width: 560px; max-height: 100%;
         display: flex; flex-direction: column;
         box-shadow: 0 24px 64px rgba(0,0,0,0.6);
         animation: slideUp 0.2s ease;
