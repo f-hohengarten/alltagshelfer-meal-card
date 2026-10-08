@@ -139,6 +139,14 @@ function splitNote(note) {
   return out;
 }
 
+// Inverse of splitNote for the form: numbered steps first, free notes below
+function joinNote(steps, note) {
+  const parts = [];
+  if (steps.length) parts.push(steps.map((t, i) => `${i + 1}. ${t}`).join('\n'));
+  if (String(note ?? '').trim()) parts.push(String(note).trim());
+  return parts.join('\n\n');
+}
+
 function isoToday() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -168,7 +176,7 @@ function parseRecipeMeta(desc) {
   const imgBlockMatch = str.match(/\n\[IMG\](data:[^\n]*)/);
   const cleanStr = imgBlockMatch ? str.slice(0, str.lastIndexOf('\n[IMG]')) : str;
   const mHead = cleanStr.match(/^\[ALH ([^\]]*)\]/);
-  const meta  = { cat: 'sonstiges', cats: ['sonstiges'], score: '', srv: 4, note: '', img: '', ingredients: [] };
+  const meta  = { cat: 'sonstiges', cats: ['sonstiges'], score: '', srv: 4, time: 0, fav: false, src: '', note: '', img: '', ingredients: [] };
   if (imgBlockMatch) meta.img = imgBlockMatch[1];
   if (mHead) {
     mHead[1].split(';').forEach(p => {
@@ -180,6 +188,9 @@ function parseRecipeMeta(desc) {
     meta.cats = String(meta.cat || '').split(',').map(c => c.trim()).filter(Boolean);
     if (!meta.cats.length) meta.cats = ['sonstiges'];
     meta.cat = meta.cats[0];
+    meta.time = parseInt(meta.time) || 0;
+    meta.fav  = meta.fav === '1' || meta.fav === true;
+    try { meta.src = decodeURIComponent(meta.src || ''); } catch (e) { meta.src = ''; }
     const rest = cleanStr.slice(mHead[0].length).trim();
     const pipeIdx = rest.indexOf('|');
     if (pipeIdx >= 0) {
@@ -198,18 +209,22 @@ function parseRecipeMeta(desc) {
   return meta;
 }
 
-function encodeRecipeMeta({ cats, cat, score, srv, note, ingredients, img }) {
+function encodeRecipeMeta({ cats, cat, score, srv, time, fav, src, note, ingredients, img }) {
   const catList = (cats && cats.length) ? cats : [cat || 'sonstiges'];
   const parts = [`cat:${catList.join(',')}`, `srv:${srv || 4}`];
   if (score) parts.push(`score:${score}`);
+  if (parseInt(time)) parts.push(`time:${parseInt(time)}`);
+  if (fav) parts.push('fav:1');
+  if (src) parts.push(`src:${encodeURIComponent(src)}`);
   // Only HTTP/HTTPS URLs go into the header; data URLs use the [IMG] block below
   if (img && !img.startsWith('data:')) parts.push(`img:${img}`);
   const head = `[ALH ${parts.join(';')}]`;
+  const clean = v => String(v ?? '').replace(/[,:]/g, ' ').trim();
   const ingStr = (ingredients || [])
     .filter(i => i.name)
-    .map(i => `${i.name}:${i.amount || ''}:${i.unit || ''}`)
+    .map(i => `${clean(i.name)}:${String(i.amount ?? '').replace(',', '.').replace(/[,:]/g, '').trim()}:${clean(i.unit)}`)
     .join(',');
-  const noteStr = (note || '').trim();
+  const noteStr = (note || '').replace(/\|/g, '/').trim();
   let result;
   if (ingStr) result = `${head} ${noteStr}|${ingStr}`;
   else if (noteStr) result = `${head} ${noteStr}`;
@@ -298,7 +313,15 @@ class AlhMealCard extends HTMLElement {
 
     this._view          = localStorage.getItem('alh-meal-view') || 'woche';
     this._weekOffset    = 0;
-    this._catFilter     = 'all';
+    this._catFilters    = [];   // categories, AND-combined
+    this._favFilter     = false;
+    this._timeFilter    = 0;    // max minutes, 0 = off
+    this._sort          = localStorage.getItem('alh-meal-sort') || 'new';
+    this._addMenuOpen   = false;
+    this._cookMode      = false;
+    this._cookDone      = new Set(); // 'i:<idx>' / 's:<idx>' checked off in cook mode
+    this._wakeLock      = null;
+    this._detailShop    = '';   // '' | 'busy' | 'done'
     this._searchQuery   = '';
 
     this._activePanel   = null; // 'recipe-form' | 'plan-form' | null
@@ -335,9 +358,9 @@ class AlhMealCard extends HTMLElement {
   _blankRecipeForm() {
     return {
       open: false, uid: null,
-      title: '', cats: [], score: '', srv: 4, note: '', img: '',
-      ingredients: [],
-      _ingName: '', _ingAmount: '', _ingUnit: 'g',
+      title: '', cats: [], score: '', srv: 4, time: '', fav: false, src: '', note: '', img: '',
+      ingredients: [], steps: [],
+      _ingName: '', _ingAmount: '', _ingUnit: 'g', _ingEditIdx: null,
       _importUrl: '',
     };
   }
@@ -548,9 +571,27 @@ class AlhMealCard extends HTMLElement {
     const planDayEl = this.shadowRoot.querySelector('.plan-form__date');
     if (planDayEl)   this._planForm.dayIso = planDayEl.value;
 
+    if (this._activePanel === 'recipe-form') {
+      const f = this._recipeForm;
+      const titleEl = this.shadowRoot.querySelector('.form__title-input');
+      const timeEl  = this.shadowRoot.querySelector('.form__time');
+      const srcEl   = this.shadowRoot.querySelector('.form__src');
+      if (titleEl) f.title = titleEl.value;
+      if (timeEl)  f.time  = timeEl.value;
+      if (srcEl)   f.src   = srcEl.value;
+      this.shadowRoot.querySelectorAll('.step-input').forEach(el => { f.steps[Number(el.dataset.idx)] = el.value; });
+    }
+
+    // Keep scroll position + skip entry animations when an open overlay re-renders
+    const overlayKey = `${this._recipeDetail || ''}|${this._activePanel || ''}`;
+    const sameOverlay = overlayKey !== '|' && overlayKey === this._prevOverlayKey;
+    const scrollEl  = this.shadowRoot.querySelector('.detail-scroll, .form-modal');
+    const scrollTop = sameOverlay && scrollEl ? scrollEl.scrollTop : 0;
+    this._prevOverlayKey = overlayKey;
+
     this.shadowRoot.innerHTML = `
       <style>${this._css()}</style>
-      <div class="card">
+      <div class="card${sameOverlay ? ' no-anim' : ''}">
         ${this._renderHeader()}
         ${this._renderViewTabs()}
         ${this._view === 'woche'   ? this._renderWoche()   : ''}
@@ -566,6 +607,10 @@ class AlhMealCard extends HTMLElement {
     this._bind();
     this._restoreFocus();
     this._positionOverlay();
+    if (scrollTop) {
+      const el = this.shadowRoot.querySelector('.detail-scroll, .form-modal');
+      if (el) el.scrollTop = scrollTop;
+    }
   }
 
   // Overlays are position:absolute relative to the card (position:fixed is
@@ -597,12 +642,17 @@ class AlhMealCard extends HTMLElement {
         </div>
         <div class="header__right">
           ${canAdd ? `
-            <button class="icon-btn" data-action="open-json-import" aria-label="JSON Import" title="Rezepte per JSON importieren">
-              <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
-            </button>
-            <button class="add-btn" data-action="open-create-recipe" aria-label="Rezept anlegen">
-              <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-            </button>
+            <div class="add-menu-wrap">
+              <button class="add-btn" data-action="toggle-add-menu" aria-label="Hinzufügen" aria-haspopup="menu" aria-expanded="${this._addMenuOpen}">
+                <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+              </button>
+              ${this._addMenuOpen ? `
+                <div class="add-menu" role="menu">
+                  <button class="add-menu__item" data-action="open-create-recipe" role="menuitem"><svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>Neues Rezept</button>
+                  <button class="add-menu__item" data-action="open-json-import" role="menuitem"><svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>Aus JSON importieren</button>
+                </div>
+              ` : ''}
+            </div>
           ` : ''}
         </div>
       </div>
@@ -753,29 +803,44 @@ class AlhMealCard extends HTMLElement {
   // ─── Rezepte View ────────────────────────────────────────────────────────────
 
   _renderRezepte() {
-    const filtered = this._filteredRecipes();
-    const total    = this._recipes.filter(r => r.status !== 'completed').length;
+    const filtered   = this._filteredRecipes();
+    const total      = this._recipes.filter(r => r.status !== 'completed').length;
+    const anyFilter  = this._catFilters.length || this._favFilter || this._timeFilter || this._searchQuery.trim();
+    const SORTS = [['new', 'Neueste zuerst'], ['az', 'A–Z'], ['time', 'Schnellste zuerst']];
     return `
       <div class="rezepte">
         <div class="search-row">
           <svg class="search__icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
           <input class="search__input" type="search" placeholder="Rezept oder Zutat suchen" value="${x(this._searchQuery)}" autocomplete="off" />
+          ${this._searchQuery ? `<button class="search__clear" data-action="clear-search" aria-label="Suche leeren"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>` : ''}
         </div>
         <div class="cat-filters">
-          <button class="cat-pill${this._catFilter === 'all' ? ' cat-pill--active' : ''}" data-cat="all">Alle</button>
-          ${this._categories.map(c => `
-            <button class="cat-pill${this._catFilter === c.v ? ' cat-pill--active' : ''}" data-cat="${c.v}">${x(c.l)}</button>
-          `).join('')}
+          <button class="cat-pill${!anyFilter || (!this._catFilters.length && !this._favFilter && !this._timeFilter) ? ' cat-pill--active' : ''}" data-filter="all">Alle</button>
+          <button class="cat-pill${this._favFilter ? ' cat-pill--active' : ''}" data-filter="fav" aria-pressed="${this._favFilter}"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg> Favoriten</button>
+          <button class="cat-pill${this._timeFilter ? ' cat-pill--active' : ''}" data-filter="time" aria-pressed="${!!this._timeFilter}"><svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg> bis 30 Min</button>
+          <span class="cat-filters__sep"></span>
+          ${this._categories.map(c => {
+            const on = this._catFilters.includes(c.v);
+            return `<button class="cat-pill${on ? ' cat-pill--active' : ''}" data-filter-cat="${c.v}" aria-pressed="${on}">${x(c.l)}</button>`;
+          }).join('')}
           <button class="cat-filters__manage" data-action="open-manage-cats"
             aria-label="Kategorien verwalten" title="Kategorien verwalten">
             <svg viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
           </button>
         </div>
-        <div class="rezepte__count">
-          ${filtered.length === total ? `${total} Rezepte` : `${filtered.length} von ${total} Rezepten`}
+        <div class="rezepte__bar">
+          <span class="rezepte__count">
+            ${filtered.length === total ? `${total} Rezepte` : `${filtered.length} von ${total} Rezepten`}
+          </span>
+          <select class="rezepte__sort" aria-label="Sortierung">
+            ${SORTS.map(([v, l]) => `<option value="${v}"${this._sort === v ? ' selected' : ''}>${l}</option>`).join('')}
+          </select>
         </div>
         ${filtered.length === 0 ? `
-          <div class="empty">Keine Rezepte gefunden.</div>
+          <div class="empty">
+            ${anyFilter ? 'Keine Rezepte passen zu deiner Auswahl.' : 'Noch keine Rezepte.'}
+            ${anyFilter ? '<br><button class="btn btn--ghost btn--sm empty__btn" data-filter="reset">Filter zurücksetzen</button>' : ''}
+          </div>
         ` : `
           <div class="recipe-grid">
             ${filtered.map(r => this._renderRecipeCard(r)).join('')}
@@ -786,19 +851,21 @@ class AlhMealCard extends HTMLElement {
   }
 
   _filteredRecipes() {
-    let items = this._recipes.filter(r => r.status !== 'completed');
-    if (this._catFilter !== 'all') {
-      items = items.filter(r => parseRecipeMeta(r.description).cats.includes(this._catFilter));
+    let items = this._recipes
+      .filter(r => r.status !== 'completed')
+      .map((r, i) => ({ r, i, m: parseRecipeMeta(r.description) }));
+    if (this._catFilters.length) items = items.filter(({ m }) => this._catFilters.every(c => m.cats.includes(c)));
+    if (this._favFilter)  items = items.filter(({ m }) => m.fav);
+    if (this._timeFilter) items = items.filter(({ m }) => m.time && m.time <= this._timeFilter);
+    const q = this._searchQuery.trim().toLowerCase();
+    if (q) {
+      items = items.filter(({ r, m }) =>
+        r.summary.toLowerCase().includes(q) || m.ingredients.some(i => i.name.toLowerCase().includes(q)));
     }
-    if (this._searchQuery.trim()) {
-      const q = this._searchQuery.toLowerCase();
-      items = items.filter(r => {
-        if (r.summary.toLowerCase().includes(q)) return true;
-        const meta = parseRecipeMeta(r.description);
-        return meta.ingredients.some(i => i.name.toLowerCase().includes(q));
-      });
-    }
-    return items;
+    if (this._sort === 'az') items.sort((a, b) => a.r.summary.localeCompare(b.r.summary, 'de'));
+    else if (this._sort === 'time') items.sort((a, b) => (a.m.time || 9999) - (b.m.time || 9999));
+    else items.sort((a, b) => b.i - a.i); // newest first = reverse insertion order
+    return items.map(o => o.r);
   }
 
   _renderRecipeCard(recipe) {
@@ -809,16 +876,18 @@ class AlhMealCard extends HTMLElement {
         <div class="recipe-card__media">
           ${meta.img ? `
             <img class="recipe-card__img" src="${x(meta.img)}" alt="" loading="lazy" onerror="this.remove()" />
-          ` : `
-            <svg class="recipe-card__ph" viewBox="0 0 24 24"><path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2.5v8H21V2c-2.76 0-5 2.24-5 4z"/></svg>
-          `}
+          ` : `<svg class="recipe-card__ph" viewBox="0 0 24 24"><path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2.5v8H21V2c-2.76 0-5 2.24-5 4z"/></svg>`}
           ${score ? `<span class="nutri-badge recipe-card__score" style="background:${nutriColor(score)};color:${nutriTextColor(score)}" title="Nutri-Score ${score}">${score}</span>` : ''}
+          <button class="recipe-card__fav${meta.fav ? ' is-on' : ''}" data-action="toggle-fav" data-recipe-uid="${x(recipe.uid)}"
+            aria-pressed="${meta.fav}" aria-label="Favorit" title="${meta.fav ? 'Aus Favoriten entfernen' : 'Zu Favoriten'}">
+            ${meta.fav ? '<svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3zm-4.4 15.55l-.1.1-.1-.1C7.14 14.24 4 11.39 4 8.5 4 6.5 5.5 5 7.5 5c1.54 0 3.04.99 3.57 2.36h1.87C13.46 5.99 14.96 5 16.5 5c2 0 3.5 1.5 3.5 3.5 0 2.89-3.14 5.74-7.9 10.05z"/></svg>'}
+          </button>
           <button class="recipe-card__plan" data-action="plan-recipe" data-recipe-uid="${x(recipe.uid)}" aria-label="Einplanen" title="Einplanen">
             <svg viewBox="0 0 24 24"><path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm-8-8h2v2.5h2.5v2H13V19h-2v-2.5H8.5v-2H11V12z"/></svg>
           </button>
         </div>
         <div class="recipe-card__title">${x(recipe.summary)}</div>
-        <div class="recipe-card__meta">${x(this._catLabels(meta))}</div>
+        <div class="recipe-card__meta">${meta.time ? `${meta.time} Min · ` : ''}${x(this._catLabels(meta))}</div>
       </article>
     `;
   }
@@ -928,6 +997,9 @@ class AlhMealCard extends HTMLElement {
     const srv      = this._detailSrv ?? (planItem ? parsePlanMeta(planItem.description).srv : meta.srv);
     const scale    = srv / (meta.srv || 1);
     const note     = splitNote(meta.note);
+    const cook     = this._cookMode;
+    const done     = this._cookDone;
+    const curStep  = cook ? note.steps.findIndex((_, i) => !done.has(`s:${i}`)) : -1;
     return `
       <div class="detail-backdrop" data-action="close-detail">
         <div class="detail-modal" role="dialog" aria-label="${x(recipe.summary)}">
@@ -951,6 +1023,7 @@ class AlhMealCard extends HTMLElement {
                     <span class="nutri-badge" style="background:${nutriColor(meta.score)};color:${nutriTextColor(meta.score)}">${meta.score}</span>
                     Nutri-Score
                   </span>` : ''}
+                ${meta.time ? `<span class="detail-fact"><svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>${meta.time} Min</span>` : ''}
                 ${meta.ingredients.length ? `<span class="detail-fact">${meta.ingredients.length} Zutaten</span>` : ''}
                 ${note.steps.length ? `<span class="detail-fact">${note.steps.length} Schritte</span>` : ''}
               </div>
@@ -967,36 +1040,51 @@ class AlhMealCard extends HTMLElement {
                       <button class="detail-srv__btn" data-action="detail-srv-plus" data-srv="${srv}" aria-label="Mehr Portionen">+</button>
                     </div>
                   </div>
-                  <ul class="detail-ing-list">
-                    ${meta.ingredients.map(ing => {
+                  <ul class="detail-ing-list${cook ? ' is-cook' : ''}">
+                    ${meta.ingredients.map((ing, i) => {
                       const amt = fmtAmount(ing.amount, scale);
+                      const isDone = cook && done.has(`i:${i}`);
                       return `
-                        <li class="detail-ing-item">
+                        <li class="detail-ing-item${isDone ? ' is-done' : ''}"${cook ? ` data-cook="i:${i}" role="checkbox" aria-checked="${isDone}"` : ''}>
                           <span class="detail-ing-amount">${amt ? `${x(amt)} ${x(ing.unit)}` : ''}</span>
                           <span class="detail-ing-name">${x(ing.name)}</span>
                         </li>`;
                     }).join('')}
                   </ul>
+                  ${this._config.shopping_entity && !cook ? `
+                    <button class="btn btn--ghost detail-shop-btn" data-action="detail-to-shop" data-srv="${srv}"${this._detailShop ? ' disabled' : ''}>
+                      <svg viewBox="0 0 24 24"><path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1.003 1.003 0 0 0 20 4H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/></svg>
+                      ${this._detailShop === 'done' ? 'Auf der Einkaufsliste' : this._detailShop === 'busy' ? 'Wird hinzugefügt…' : `Zutaten für ${srv} ${srv === 1 ? 'Portion' : 'Portionen'} auf die Einkaufsliste`}
+                    </button>
+                  ` : ''}
                 </section>
               ` : ''}
 
               ${note.steps.length ? `
                 <section class="detail-section">
-                  <h3 class="detail-h3">Zubereitung</h3>
-                  <ol class="detail-steps">
-                    ${note.steps.map((t, i) => `
-                      <li class="detail-step">
-                        <span class="detail-step__num">${i + 1}</span>
-                        <p class="detail-step__text">${x(t)}</p>
-                      </li>
-                    `).join('')}
+                  <div class="detail-section__head">
+                    <h3 class="detail-h3">Zubereitung</h3>
+                    ${cook ? '' : `<button class="btn btn--ghost btn--sm" data-action="cook-start"><svg viewBox="0 0 24 24"><path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2.5v8H21V2c-2.76 0-5 2.24-5 4z"/></svg>Kochmodus</button>`}
+                  </div>
+                  <ol class="detail-steps${cook ? ' is-cook' : ''}">
+                    ${note.steps.map((t, i) => {
+                      const isDone = cook && done.has(`s:${i}`);
+                      return `
+                        <li class="detail-step${isDone ? ' is-done' : ''}${i === curStep ? ' is-current' : ''}"${cook ? ` data-cook="s:${i}" role="checkbox" aria-checked="${isDone}"` : ''}>
+                          <span class="detail-step__num">${isDone ? '✓' : i + 1}</span>
+                          <p class="detail-step__text">${x(t)}</p>
+                        </li>`;
+                    }).join('')}
                   </ol>
                 </section>
               ` : ''}
 
-              ${note.outro.length ? `
+              ${note.outro.length || meta.src ? `
                 <div class="detail-outro">
                   ${note.outro.map(t => `<p class="detail-text detail-text--muted">${x(t)}</p>`).join('')}
+                  ${/^https?:\/\//.test(meta.src) ? `
+                    <a class="detail-src" href="${x(meta.src)}" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>Original ansehen</a>
+                  ` : ''}
                 </div>
               ` : ''}
 
@@ -1033,7 +1121,15 @@ class AlhMealCard extends HTMLElement {
             </div>
           </div>
 
-          ${this._detailChanging ? '' : `
+          ${this._detailChanging ? '' : cook ? `
+            <div class="detail-footer">
+              <span class="detail-footer__info">
+                ${note.steps.filter((_, i) => done.has(`s:${i}`)).length} von ${note.steps.length} Schritten
+                ${this._wakeLock ? '<span class="detail-footer__sub">Bildschirm bleibt an</span>' : ''}
+              </span>
+              <button class="btn btn--primary detail-footer__main" data-action="cook-stop">Fertig</button>
+            </div>
+          ` : `
             <div class="detail-footer">
               ${this._detailPlanUid ? `
                 <button class="btn btn--text btn--text-danger" data-action="remove-from-plan">Aus Plan entfernen</button>
@@ -1042,7 +1138,12 @@ class AlhMealCard extends HTMLElement {
                   <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
                 </button>
               `}
-              <button class="btn btn--ghost" data-action="edit-recipe" data-recipe-uid="${x(recipe.uid)}">Bearbeiten</button>
+              <button class="icon-btn icon-btn--lg" data-action="edit-recipe" data-recipe-uid="${x(recipe.uid)}" aria-label="Bearbeiten" title="Bearbeiten">
+                <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+              </button>
+              <button class="icon-btn icon-btn--lg detail-fav${meta.fav ? ' is-on' : ''}" data-action="toggle-fav" data-recipe-uid="${x(recipe.uid)}" aria-pressed="${meta.fav}" aria-label="Favorit" title="${meta.fav ? 'Aus Favoriten entfernen' : 'Zu Favoriten'}">
+                ${meta.fav ? '<svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3zm-4.4 15.55l-.1.1-.1-.1C7.14 14.24 4 11.39 4 8.5 4 6.5 5.5 5 7.5 5c1.54 0 3.04.99 3.57 2.36h1.87C13.46 5.99 14.96 5 16.5 5c2 0 3.5 1.5 3.5 3.5 0 2.89-3.14 5.74-7.9 10.05z"/></svg>'}
+              </button>
               ${this._detailPlanUid ? `
                 <button class="btn btn--primary detail-footer__main" data-action="toggle-detail-change">Gericht ändern</button>
               ` : `
@@ -1167,37 +1268,67 @@ class AlhMealCard extends HTMLElement {
           <button class="pill${f.score === '' ? ' pill--on' : ''}" data-score="">Keine</button>
         </div>
 
-        <div class="form__section-label">Portionen</div>
-        <div class="srv-stepper">
-          <button class="srv-btn" data-action="recipe-srv-minus">−</button>
-          <span class="srv-val">${f.srv}</span>
-          <button class="srv-btn" data-action="recipe-srv-plus">+</button>
+        <div class="form__row">
+          <div>
+            <div class="form__section-label">Portionen</div>
+            <div class="srv-stepper">
+              <button class="srv-btn" data-action="recipe-srv-minus">−</button>
+              <span class="srv-val">${f.srv}</span>
+              <button class="srv-btn" data-action="recipe-srv-plus">+</button>
+            </div>
+          </div>
+          <div>
+            <div class="form__section-label">Zeit</div>
+            <label class="form__time-wrap">
+              <input class="form__time form__input form__input--sm" type="number" inputmode="numeric" min="0" step="5"
+                placeholder="–" value="${x(f.time)}" />
+              <span>Min.</span>
+            </label>
+          </div>
         </div>
 
         <div class="form__section-label">Zutaten</div>
         ${f.ingredients.length > 0 ? `
           <ul class="ing-list">
             ${f.ingredients.map((ing, idx) => `
-              <li class="ing-item">
+              <li class="ing-item${f._ingEditIdx === idx ? ' ing-item--editing' : ''}">
                 <span class="ing-item__text">${x(ing.amount)} ${x(ing.unit)} ${x(ing.name)}</span>
-                <button class="icon-btn icon-btn--sm" data-action="del-ing" data-idx="${idx}" aria-label="Entfernen">
-                  <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-                </button>
+                <button class="icon-btn icon-btn--sm" data-action="edit-ing" data-idx="${idx}" aria-label="Bearbeiten"><svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button>
+                <button class="icon-btn icon-btn--sm" data-action="del-ing" data-idx="${idx}" aria-label="Entfernen"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
               </li>
             `).join('')}
           </ul>
         ` : ''}
         <div class="ing-add-row">
           <input class="ing-add__name form__input form__input--sm" type="text" placeholder="Zutat" value="${x(f._ingName)}" autocomplete="off" />
-          <input class="ing-add__amount form__input form__input--sm" type="number" placeholder="Menge" value="${x(f._ingAmount)}" min="0" step="any" />
-          <select class="ing-add__unit form__select">
-            ${UNITS.map(u => `<option value="${u}"${f._ingUnit === u ? ' selected' : ''}>${u}</option>`).join('')}
-          </select>
-          <button class="btn btn--ghost btn--sm" data-action="add-ing">+</button>
+          <input class="ing-add__amount form__input form__input--sm" type="text" inputmode="decimal" placeholder="Menge" value="${x(f._ingAmount)}" />
+          <input class="ing-add__unit form__input form__input--sm" type="text" list="alh-units" placeholder="Einheit" value="${x(f._ingUnit)}" autocomplete="off" />
+          <datalist id="alh-units">${UNITS.map(u => `<option value="${u}"></option>`).join('')}</datalist>
+          ${f._ingEditIdx !== null ? `
+            <button class="btn btn--primary btn--sm" data-action="add-ing">Übernehmen</button>
+            <button class="btn btn--text btn--sm" data-action="cancel-edit-ing">Abbrechen</button>
+          ` : `<button class="btn btn--ghost btn--sm" data-action="add-ing" aria-label="Zutat hinzufügen">+</button>`}
         </div>
 
-        <div class="form__section-label">Notiz (optional)</div>
-        <textarea class="form__note" placeholder="Kurze Beschreibung oder Tipps…" rows="2">${x(f.note)}</textarea>
+        <div class="form__section-label">Zubereitung</div>
+        ${f.steps.length ? `
+          <ol class="step-list">
+            ${f.steps.map((t, idx) => `
+              <li class="step-edit">
+                <span class="step-edit__num">${idx + 1}</span>
+                <textarea class="step-input" data-idx="${idx}" rows="3" placeholder="Schritt beschreiben…">${x(t)}</textarea>
+                <button class="icon-btn icon-btn--sm" data-action="del-step" data-idx="${idx}" aria-label="Schritt entfernen"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+              </li>
+            `).join('')}
+          </ol>
+        ` : ''}
+        <button class="btn btn--ghost btn--sm" data-action="add-step">+ Schritt hinzufügen</button>
+
+        <div class="form__section-label">Notizen</div>
+        <textarea class="form__note" placeholder="Tipps, Varianten, Nährwerte…" rows="2">${x(f.note)}</textarea>
+
+        <div class="form__section-label">Quelle</div>
+        <input class="form__src form__input form__input--sm" type="url" placeholder="Link zum Originalrezept" value="${x(f.src)}" />
 
         <div class="form__section-label">Bild</div>
         ${f.img ? `
@@ -1316,7 +1447,10 @@ class AlhMealCard extends HTMLElement {
         cats: ['pasta', 'fleisch'],
         score: 'C',
         srv: 4,
+        time: 45,
+        steps: ['Zwiebel und Knoblauch anbraten.', 'Hack dazugeben und krümelig braten.', 'Tomaten zugeben, 30 Min. köcheln.'],
         note: 'Klassiker mit Hackfleisch-Tomaten-Sauce',
+        src: 'https://example.com/bolognese',
         img: '',
         ingredients: [
           { name: 'Spaghetti', amount: '400', unit: 'g' },
@@ -1493,9 +1627,124 @@ class AlhMealCard extends HTMLElement {
       });
     });
 
-    // Header add recipe
+    // Header "+" menu
+    const addMenuBtn = root.querySelector('[data-action="toggle-add-menu"]');
+    if (addMenuBtn) addMenuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this._addMenuOpen = !this._addMenuOpen;
+      this._render();
+    });
+    if (this._addMenuOpen) {
+      root.querySelector('.card')?.addEventListener('click', (e) => {
+        if (e.target.closest('.add-menu-wrap')) return;
+        this._addMenuOpen = false;
+        this._render();
+      });
+    }
     const addBtn = root.querySelector('[data-action="open-create-recipe"]');
-    if (addBtn) addBtn.addEventListener('click', () => this._openCreateRecipe());
+    if (addBtn) addBtn.addEventListener('click', () => { this._addMenuOpen = false; this._openCreateRecipe(); });
+
+    // Recipe browser filters (chips combine; "Alle"/reset clears everything)
+    root.querySelectorAll('[data-filter]').forEach(el => {
+      el.addEventListener('click', () => {
+        const f = el.dataset.filter;
+        if (f === 'fav') this._favFilter = !this._favFilter;
+        else if (f === 'time') this._timeFilter = this._timeFilter ? 0 : 30;
+        else {
+          this._catFilters = []; this._favFilter = false; this._timeFilter = 0;
+          if (f === 'reset') this._clearSearchInput();
+        }
+        this._render();
+      });
+    });
+    root.querySelectorAll('[data-filter-cat]').forEach(el => {
+      el.addEventListener('click', () => {
+        const v = el.dataset.filterCat;
+        this._catFilters = this._catFilters.includes(v)
+          ? this._catFilters.filter(c => c !== v)
+          : [...this._catFilters, v];
+        this._render();
+      });
+    });
+    const sortEl = root.querySelector('.rezepte__sort');
+    if (sortEl) sortEl.addEventListener('change', () => {
+      this._sort = sortEl.value;
+      localStorage.setItem('alh-meal-sort', this._sort);
+      this._render();
+    });
+    const clearSearch = root.querySelector('[data-action="clear-search"]');
+    if (clearSearch) clearSearch.addEventListener('click', () => {
+      this._clearSearchInput();
+      this._render();
+      this.shadowRoot.querySelector('.search__input')?.focus();
+    });
+
+    // Favorites (card heart + detail footer)
+    root.querySelectorAll('[data-action="toggle-fav"]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const recipe = this._recipes.find(r => r.uid === el.dataset.recipeUid);
+        if (!recipe) return;
+        this._updateRecipeMeta(recipe.uid, { fav: !parseRecipeMeta(recipe.description).fav });
+      });
+    });
+
+    // Detail: shopping list + cook mode
+    const detailShop = root.querySelector('[data-action="detail-to-shop"]');
+    if (detailShop) detailShop.addEventListener('click', () => {
+      this._sendRecipeToShopping(this._recipeDetail, Number(detailShop.dataset.srv) || 1);
+    });
+    const cookStart = root.querySelector('[data-action="cook-start"]');
+    if (cookStart) cookStart.addEventListener('click', async () => {
+      this._cookMode = true;
+      this._cookDone = new Set();
+      this._render();
+      await this._setWakeLock(true);
+      this._render();
+    });
+    const cookStop = root.querySelector('[data-action="cook-stop"]');
+    if (cookStop) cookStop.addEventListener('click', () => {
+      this._cookMode = false;
+      this._setWakeLock(false);
+      this._render();
+    });
+    root.querySelectorAll('[data-cook]').forEach(el => {
+      el.addEventListener('click', () => {
+        const k = el.dataset.cook;
+        if (this._cookDone.has(k)) this._cookDone.delete(k); else this._cookDone.add(k);
+        this._render();
+      });
+    });
+
+    // Recipe form: edit ingredient / steps
+    root.querySelectorAll('[data-action="edit-ing"]').forEach(el => {
+      el.addEventListener('click', () => {
+        const idx = Number(el.dataset.idx);
+        const ing = this._recipeForm.ingredients[idx];
+        if (!ing) return;
+        this._setIngInputs(ing.name, ing.amount, ing.unit, idx);
+        this._render();
+        this.shadowRoot.querySelector('.ing-add__name')?.focus();
+      });
+    });
+    const cancelEditIng = root.querySelector('[data-action="cancel-edit-ing"]');
+    if (cancelEditIng) cancelEditIng.addEventListener('click', () => {
+      this._setIngInputs('', '', this._recipeForm._ingUnit);
+      this._render();
+    });
+    const addStep = root.querySelector('[data-action="add-step"]');
+    if (addStep) addStep.addEventListener('click', () => {
+      this._recipeForm.steps.push('');
+      this._render();
+      const inputs = this.shadowRoot.querySelectorAll('.step-input');
+      inputs[inputs.length - 1]?.focus();
+    });
+    root.querySelectorAll('[data-action="del-step"]').forEach(el => {
+      el.addEventListener('click', () => {
+        this._recipeForm.steps.splice(Number(el.dataset.idx), 1);
+        this._render();
+      });
+    });
 
     // Week navigation
     const weekPrev = root.querySelector('[data-action="week-prev"]');
@@ -1600,7 +1849,8 @@ class AlhMealCard extends HTMLElement {
     // Recipe detail overlay — open from recipe cards view
     root.querySelectorAll('[data-action="open-detail"]').forEach(el => {
       el.addEventListener('click', (e) => {
-        if (e.target.closest('[data-action="edit-recipe"],[data-action="plan-recipe"],[data-action="delete-recipe-direct"]')) return;
+        if (e.target.closest('[data-action="edit-recipe"],[data-action="plan-recipe"],[data-action="delete-recipe-direct"],[data-action="toggle-fav"]')) return;
+        this._resetDetailState();
         this._recipeDetail = el.dataset.recipeUid;
         this._detailPlanUid = null;
         this._detailSrv = null;
@@ -1616,6 +1866,7 @@ class AlhMealCard extends HTMLElement {
         if (e.target.closest('[data-action="del-plan"]')) return;
         const recipeUid = el.dataset.recipeUid;
         if (!recipeUid) return;
+        this._resetDetailState();
         this._recipeDetail = recipeUid;
         this._detailPlanUid = el.dataset.planUid;
         this._detailSrv = null;
@@ -1628,6 +1879,7 @@ class AlhMealCard extends HTMLElement {
     root.querySelectorAll('[data-action="close-detail"]').forEach(el => {
       el.addEventListener('click', (e) => {
         if (e.target !== el && !el.classList.contains('detail-close')) return;
+        this._resetDetailState();
         this._recipeDetail = null;
         this._detailPlanUid = null;
         this._detailSrv = null;
@@ -1739,6 +1991,7 @@ class AlhMealCard extends HTMLElement {
       el.addEventListener('click', (e) => {
         e.stopPropagation();
         const srv = this._recipeDetail ? this._detailSrv : null;
+        this._resetDetailState();
         this._recipeDetail = null;
         this._detailSrv    = null;
         this._openPlanForm('', el.dataset.recipeUid, 'mittag', srv);
@@ -1749,8 +2002,8 @@ class AlhMealCard extends HTMLElement {
     root.querySelectorAll('[data-action="delete-recipe-direct"]').forEach(el => {
       el.addEventListener('click', (e) => {
         e.stopPropagation();
-        const title = el.dataset.recipeTitle || 'dieses Rezept';
-        if (!confirm(`„${title}" wirklich löschen?`)) return;
+        if (!this._confirmDeleteRecipe(el.dataset.recipeUid)) return;
+        this._resetDetailState();
         this._deleteRecipe(el.dataset.recipeUid);
       });
     });
@@ -1804,8 +2057,6 @@ class AlhMealCard extends HTMLElement {
           // "Sonstiges" is only a fallback — drop it once a real category is picked
           if (v !== 'sonstiges' && cats.length > 1) cats = cats.filter(c => c !== 'sonstiges');
           this._recipeForm.cats = cats;
-        } else {
-          this._catFilter = el.dataset.cat;
         }
         this._render();
       });
@@ -1913,7 +2164,9 @@ class AlhMealCard extends HTMLElement {
     // Delete ingredient
     root.querySelectorAll('[data-action="del-ing"]').forEach(el => {
       el.addEventListener('click', () => {
-        this._recipeForm.ingredients.splice(parseInt(el.dataset.idx), 1);
+        const idx = parseInt(el.dataset.idx);
+        this._recipeForm.ingredients.splice(idx, 1);
+        if (this._recipeForm._ingEditIdx !== null) this._setIngInputs('', '', this._recipeForm._ingUnit);
         this._render();
       });
     });
@@ -1931,7 +2184,9 @@ class AlhMealCard extends HTMLElement {
     });
 
     const deleteRecipe = root.querySelector('[data-action="delete-recipe"]');
-    if (deleteRecipe) deleteRecipe.addEventListener('click', () => this._deleteRecipe(this._recipeForm.uid));
+    if (deleteRecipe) deleteRecipe.addEventListener('click', () => {
+      if (this._confirmDeleteRecipe(this._recipeForm.uid)) this._deleteRecipe(this._recipeForm.uid);
+    });
 
     const importBtn = root.querySelector('[data-action="import-url"]');
     if (importBtn) importBtn.addEventListener('click', () => this._importUrl());
@@ -2022,6 +2277,7 @@ class AlhMealCard extends HTMLElement {
 
     const openJsonImport = root.querySelector('[data-action="open-json-import"]');
     if (openJsonImport) openJsonImport.addEventListener('click', () => {
+      this._addMenuOpen     = false;
       this._jsonImportText  = '';
       this._jsonImportError = '';
       this._jsonImportCount = 0;
@@ -2074,7 +2330,7 @@ class AlhMealCard extends HTMLElement {
           ? `„${cat.l}" wirklich löschen?\n${count} Rezept${count !== 1 ? 'e' : ''} ${count !== 1 ? 'nutzen' : 'nutzt'} diese Kategorie (die Rezepte bleiben erhalten, zeigen dann den Rohwert als Label).`
           : `„${cat.l}" wirklich löschen?`;
         if (!confirm(msg)) return;
-        if (this._catFilter === v) this._catFilter = 'all';
+        this._catFilters = this._catFilters.filter(c => c !== v);
         this._categories = this._categories.filter(c => c.v !== v);
         this._saveCategories();
         this._catMgmtNewLabel = '';
@@ -2164,16 +2420,21 @@ class AlhMealCard extends HTMLElement {
     const recipe = this._recipes.find(r => r.uid === uid);
     if (!recipe) return;
     const meta = parseRecipeMeta(recipe.description);
+    const note = splitNote(meta.note);
     this._recipeForm = {
       open: true, uid,
       title: recipe.summary,
       cats:  [...meta.cats],
       score: meta.score || '',
       srv:   meta.srv || 4,
-      note:  meta.note || '',
+      time:  meta.time || '',
+      fav:   meta.fav,
+      src:   meta.src || '',
+      note:  [...note.intro, ...note.outro].join('\n'),
+      steps: [...note.steps],
       img:   meta.img || '',
       ingredients: [...meta.ingredients],
-      _ingName: '', _ingAmount: '', _ingUnit: 'g',
+      _ingName: '', _ingAmount: '', _ingUnit: 'g', _ingEditIdx: null,
     };
     this._activePanel = 'recipe-form';
     this._render();
@@ -2192,20 +2453,30 @@ class AlhMealCard extends HTMLElement {
     this._render();
   }
 
+  // _render() re-reads the add-row inputs, so state and DOM are set together
+  _setIngInputs(name, amount, unit, editIdx = null) {
+    Object.assign(this._recipeForm, { _ingName: name, _ingAmount: amount, _ingUnit: unit, _ingEditIdx: editIdx });
+    const set = (sel, v) => { const el = this.shadowRoot.querySelector(sel); if (el) el.value = v; };
+    set('.ing-add__name', name);
+    set('.ing-add__amount', amount);
+    set('.ing-add__unit', unit);
+  }
+
   _addIngredient() {
     const nameEl = this.shadowRoot.querySelector('.ing-add__name');
     const amtEl  = this.shadowRoot.querySelector('.ing-add__amount');
     const unitEl = this.shadowRoot.querySelector('.ing-add__unit');
-    const name   = (nameEl?.value ?? this._recipeForm._ingName).trim();
+    const f      = this._recipeForm;
+    const name   = (nameEl?.value ?? f._ingName).trim();
     if (!name) return;
-    this._recipeForm.ingredients.push({
+    const ing = {
       name,
-      amount: (amtEl?.value ?? this._recipeForm._ingAmount).trim(),
-      unit:   (unitEl?.value ?? this._recipeForm._ingUnit) || 'g',
-    });
-    this._recipeForm._ingName   = '';
-    this._recipeForm._ingAmount = '';
-    this._recipeForm._ingUnit   = unitEl?.value || 'g';
+      amount: (amtEl?.value ?? f._ingAmount).trim().replace(',', '.'),
+      unit:   (unitEl?.value ?? f._ingUnit).trim(),
+    };
+    if (f._ingEditIdx !== null && f.ingredients[f._ingEditIdx]) f.ingredients[f._ingEditIdx] = ing;
+    else f.ingredients.push(ing);
+    this._setIngInputs('', '', ing.unit);
     this._render();
     // Focus back on name input
     setTimeout(() => {
@@ -2224,9 +2495,16 @@ class AlhMealCard extends HTMLElement {
     }
     if (noteEl) this._recipeForm.note = noteEl.value;
 
-    const { uid, score, srv, note, ingredients, img } = this._recipeForm;
-    const cats = this._recipeForm.cats.length ? this._recipeForm.cats : ['sonstiges'];
-    const desc = encodeRecipeMeta({ cats, score, srv, note, ingredients, img });
+    const f       = this._recipeForm;
+    const stepEls = [...this.shadowRoot.querySelectorAll('.step-input')];
+    const steps   = (stepEls.length ? stepEls.map(el => el.value) : f.steps)
+      .map(t => String(t).replace(/\s*\n\s*/g, ' ').trim()).filter(Boolean);
+    const time    = this.shadowRoot.querySelector('.form__time')?.value ?? f.time;
+    const src     = (this.shadowRoot.querySelector('.form__src')?.value ?? f.src).trim();
+    const { uid, score, srv, fav, ingredients, img } = f;
+    const cats = f.cats.length ? f.cats : ['sonstiges'];
+    const note = joinNote(steps, f.note);
+    const desc = encodeRecipeMeta({ cats, score, srv, time, fav, src, note, ingredients, img });
 
     if (uid) {
       this._svc(this._config.recipe_entity, 'update_item', { item: uid, rename: title, description: desc });
@@ -2238,6 +2516,78 @@ class AlhMealCard extends HTMLElement {
     this._recipeForm   = this._blankRecipeForm();
     this._importResult = null;
     this._render();
+  }
+
+  _confirmDeleteRecipe(uid) {
+    const recipe = this._recipes.find(r => r.uid === uid);
+    if (!recipe) return false;
+    const planned = this._plan.filter(p => p.status !== 'completed' && parsePlanMeta(p.description).recipe_id === uid).length;
+    const extra = planned
+      ? `\n\n${planned} geplante Mahlzeit${planned !== 1 ? 'en werden' : ' wird'} ebenfalls aus dem Wochenplan entfernt.`
+      : '';
+    return confirm(`„${recipe.summary}" wirklich löschen?${extra}`);
+  }
+
+  // Re-encodes a recipe with changed meta fields (keeps image, notes, ingredients)
+  _updateRecipeMeta(uid, patch) {
+    const recipe = this._recipes.find(r => r.uid === uid);
+    if (!recipe) return;
+    const desc = encodeRecipeMeta({ ...parseRecipeMeta(recipe.description), ...patch });
+    recipe.description = desc; // optimistic, the subscription refetch confirms it
+    this._render();
+    this._svc(this._config.recipe_entity, 'update_item', { item: uid, description: desc })
+      .catch(e => console.error('[alh-meal-card] updateRecipe:', e));
+  }
+
+  async _sendRecipeToShopping(uid, srv) {
+    const entity = this._config.shopping_entity;
+    const recipe = this._recipes.find(r => r.uid === uid);
+    if (!entity || !recipe || this._detailShop) return;
+    const meta  = parseRecipeMeta(recipe.description);
+    const scale = srv / (meta.srv || 1);
+    this._detailShop = 'busy';
+    this._render();
+    try {
+      for (const ing of meta.ingredients) {
+        const label = [fmtAmount(ing.amount, scale), fmtAmount(ing.amount, scale) ? ing.unit : '', ing.name]
+          .filter(Boolean).join(' ');
+        await this._svc(entity, 'add_item', { item: label });
+      }
+      this._detailShop = 'done';
+    } catch (e) {
+      console.error('[alh-meal-card] sendRecipeToShopping:', e);
+      this._detailShop = '';
+    }
+    this._render();
+  }
+
+  // _render() re-reads the live input, so the field itself must be emptied too
+  _clearSearchInput() {
+    this._searchQuery = '';
+    const el = this.shadowRoot.querySelector('.search__input');
+    if (el) el.value = '';
+  }
+
+  _resetDetailState() {
+    if (this._cookMode) this._setWakeLock(false);
+    this._cookMode   = false;
+    this._cookDone   = new Set();
+    this._detailShop = '';
+  }
+
+  // Keeps the screen on in cook mode (needs HTTPS; silently skipped otherwise)
+  async _setWakeLock(on) {
+    try {
+      if (on && !this._wakeLock && navigator.wakeLock) {
+        this._wakeLock = await navigator.wakeLock.request('screen');
+        this._wakeLock.addEventListener('release', () => { this._wakeLock = null; });
+      } else if (!on && this._wakeLock) {
+        await this._wakeLock.release();
+        this._wakeLock = null;
+      }
+    } catch (e) {
+      this._wakeLock = null;
+    }
   }
 
   _deleteRecipe(uid) {
@@ -2286,8 +2636,12 @@ class AlhMealCard extends HTMLElement {
       const score = 'ABCDE'.includes(String(r.score ?? '').toUpperCase())
         ? String(r.score).toUpperCase() : '';
       const srv   = parseInt(r.srv) || 4;
-      const note  = String(r.note ?? '').trim();
+      const steps = Array.isArray(r.steps) ? r.steps.map(t => String(t).replace(/\s*\n\s*/g, ' ').trim()).filter(Boolean) : [];
+      const note  = joinNote(steps, String(r.note ?? ''));
       const img   = String(r.img ?? '').trim();
+      const time  = parseInt(r.time) || 0;
+      const fav   = !!r.fav;
+      const src   = String(r.src ?? '').trim();
 
       const ingredients = Array.isArray(r.ingredients)
         ? r.ingredients.map(ing => ({
@@ -2297,7 +2651,7 @@ class AlhMealCard extends HTMLElement {
           })).filter(ing => ing.name)
         : [];
 
-      const desc = encodeRecipeMeta({ cats, score, srv, note, ingredients, img });
+      const desc = encodeRecipeMeta({ cats, score, srv, time, fav, src, note, ingredients, img });
       await this._svc(this._config.recipe_entity, 'add_item', { item: title, description: desc });
       count++;
     }
@@ -2662,6 +3016,8 @@ class AlhMealCard extends HTMLElement {
       }
       .cat-pill:hover { background: var(--alh-fill-2); }
       .cat-pill--active, .cat-pill--active:hover { background: var(--alh-text); color: var(--alh-bg); }
+      .cat-pill svg { width: 14px; height: 14px; fill: currentColor; vertical-align: -2px; margin-right: 2px; }
+      .cat-filters__sep { flex-shrink: 0; width: 1px; margin: 6px 2px; background: var(--alh-line); }
       .cat-filters__manage {
         flex-shrink: 0; width: 34px; border-radius: 999px; border: none; cursor: pointer;
         background: transparent; display: flex; align-items: center; justify-content: center;
@@ -2669,7 +3025,22 @@ class AlhMealCard extends HTMLElement {
       .cat-filters__manage svg { width: 18px; height: 18px; fill: var(--alh-muted); }
       .cat-filters__manage:hover { background: var(--alh-fill); }
 
-      .rezepte__count { font-size: 13px; color: var(--alh-muted); margin: 14px 0 10px; }
+      .rezepte__bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 14px 0 10px; }
+      .rezepte__count { font-size: 13px; color: var(--alh-muted); }
+      .rezepte__sort {
+        background: transparent; border: none; color: var(--alh-muted); font-size: 13px; font-family: inherit;
+        cursor: pointer; padding: 4px 0; text-align: right; outline: none; color-scheme: dark light;
+      }
+      .rezepte__sort:hover { color: var(--alh-text); }
+      .search__input::-webkit-search-cancel-button { display: none; }
+      .search__clear {
+        position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+        width: 30px; height: 30px; border-radius: 50%; border: none; cursor: pointer; padding: 0;
+        background: transparent; display: flex; align-items: center; justify-content: center;
+      }
+      .search__clear svg { width: 16px; height: 16px; fill: var(--alh-muted); }
+      .search__clear:hover { background: var(--alh-fill); }
+      .empty__btn { margin-top: 10px; }
 
       .recipe-grid {
         display: grid;
@@ -2690,8 +3061,16 @@ class AlhMealCard extends HTMLElement {
       .recipe-card:hover .recipe-card__img { transform: scale(1.03); }
       .recipe-card__ph { width: 34px; height: 34px; fill: var(--alh-muted); opacity: 0.35; }
       .recipe-card__score { position: absolute; left: 8px; bottom: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
-      .recipe-card__plan {
+      .recipe-card__fav {
         position: absolute; top: 8px; right: 8px;
+        width: 34px; height: 34px; border-radius: 50%; border: none; cursor: pointer; padding: 0;
+        background: rgba(0,0,0,0.45); backdrop-filter: blur(6px);
+        display: flex; align-items: center; justify-content: center;
+      }
+      .recipe-card__fav svg { width: 18px; height: 18px; fill: #fff; }
+      .recipe-card__fav.is-on svg { fill: #FF453A; }
+      .recipe-card__plan {
+        position: absolute; bottom: 8px; right: 8px;
         width: 34px; height: 34px; border-radius: 50%; border: none; cursor: pointer; padding: 0;
         background: rgba(0,0,0,0.45); backdrop-filter: blur(6px);
         display: flex; align-items: center; justify-content: center;
@@ -2868,7 +3247,7 @@ class AlhMealCard extends HTMLElement {
       }
       .form__select--full { width: 100%; box-sizing: border-box; padding: 10px 14px; font-size: 14px; }
 
-      .form__note, .import-paste-textarea {
+      .form__note, .import-paste-textarea, .step-input {
         width: 100%; box-sizing: border-box;
         background: rgba(128,128,128,0.08);
         border: 1px solid rgba(128,128,128,0.15); border-radius: 10px;
@@ -2876,8 +3255,8 @@ class AlhMealCard extends HTMLElement {
         color: var(--primary-text-color, currentColor); outline: none; resize: vertical;
         transition: border-color 0.15s;
       }
-      .form__note::placeholder, .import-paste-textarea::placeholder { color: var(--secondary-text-color, currentColor); opacity: 0.4; }
-      .form__note:focus, .import-paste-textarea:focus { border-color: var(--primary-color, #0A84FF); }
+      .form__note::placeholder, .import-paste-textarea::placeholder, .step-input::placeholder { color: var(--secondary-text-color, currentColor); opacity: 0.4; }
+      .form__note:focus, .import-paste-textarea:focus, .step-input:focus { border-color: var(--primary-color, #0A84FF); }
 
       .form__actions {
         display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; align-items: center;
@@ -2918,6 +3297,37 @@ class AlhMealCard extends HTMLElement {
       }
       .ing-add__name   { flex: 1; min-width: 90px; }
       .ing-add__amount { width: 70px; flex-shrink: 0; }
+      .ing-add__unit   { width: 90px; flex-shrink: 0; }
+      .ing-item--editing { outline: 1px solid var(--alh-accent); }
+
+      .form__row { display: flex; gap: 24px; flex-wrap: wrap; }
+      .form__time-wrap { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--alh-muted); margin-top: 4px; }
+      .form__time { width: 72px; }
+      .step-list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+      .step-edit { display: grid; grid-template-columns: 24px 1fr 24px; gap: 8px; align-items: start; }
+      .step-edit__num {
+        width: 24px; height: 24px; border-radius: 50%; margin-top: 8px;
+        background: var(--alh-fill-2); color: var(--alh-text);
+        display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700;
+      }
+      .step-edit .icon-btn { margin-top: 8px; }
+      .step-input { field-sizing: content; min-height: 4.5em; resize: none; }
+      .form__src { width: 100%; }
+
+      /* Header "+" menu */
+      .add-menu-wrap { position: relative; }
+      .add-menu {
+        position: absolute; right: 0; top: calc(100% + 6px); z-index: 50; min-width: 210px;
+        background: var(--alh-bg); border: 1px solid var(--alh-line); border-radius: 12px;
+        box-shadow: 0 12px 32px rgba(0,0,0,0.35); padding: 4px; animation: fadeIn 0.12s ease;
+      }
+      .add-menu__item {
+        display: flex; align-items: center; gap: 10px; width: 100%;
+        padding: 10px 12px; border: none; border-radius: 8px; background: transparent; cursor: pointer;
+        font-size: 14px; font-family: inherit; color: var(--alh-text); text-align: left;
+      }
+      .add-menu__item:hover { background: var(--alh-fill); }
+      .add-menu__item svg { width: 18px; height: 18px; fill: var(--alh-muted); }
 
       /* ── Servings in recipe form ── */
       .srv-stepper { margin-top: 4px; }
@@ -3101,6 +3511,31 @@ class AlhMealCard extends HTMLElement {
         padding: 12px 16px; border-top: 1px solid var(--alh-line); background: var(--alh-bg);
       }
       .detail-footer__main { margin-left: auto; padding-left: 22px; padding-right: 22px; }
+      .detail-footer__info { display: flex; flex-direction: column; font-size: 14px; font-weight: 600; color: var(--alh-text); }
+      .detail-footer__sub { font-size: 12px; font-weight: 400; color: var(--alh-muted); }
+      .detail-fav.is-on svg { fill: #FF453A; opacity: 1; }
+      .detail-fact svg { width: 16px; height: 16px; fill: currentColor; }
+      .detail-shop-btn { width: 100%; margin-top: 12px; }
+      .detail-shop-btn:disabled { opacity: 0.7; cursor: default; }
+      .detail-section__head .btn svg { width: 15px; height: 15px; }
+      .detail-src {
+        display: inline-flex; align-items: center; gap: 6px; margin-top: 10px;
+        font-size: 14px; font-weight: 600; color: var(--alh-accent); text-decoration: none;
+      }
+      .detail-src svg { width: 15px; height: 15px; fill: currentColor; }
+      .detail-src:hover { text-decoration: underline; }
+
+      /* Cook mode: tap ingredients/steps to tick them off */
+      .is-cook .detail-ing-item, .is-cook .detail-step { cursor: pointer; transition: opacity 0.15s; user-select: none; }
+      .is-cook .detail-ing-item.is-done, .is-cook .detail-step.is-done { opacity: 0.35; }
+      .is-cook .detail-ing-item.is-done .detail-ing-name, .is-cook .detail-step.is-done .detail-step__text { text-decoration: line-through; }
+      .is-cook .detail-step__text { font-size: 17px; }
+      .is-cook .detail-step.is-current .detail-step__num { background: var(--alh-accent); color: #fff; }
+      .is-cook .detail-step.is-current { background: var(--alh-fill); margin: -10px -12px; padding: 10px 12px; border-radius: 12px; }
+
+      /* No entry animation when an already-open overlay re-renders */
+      .card.no-anim .detail-backdrop, .card.no-anim .detail-modal,
+      .card.no-anim .form-overlay, .card.no-anim .form-modal { animation: none; }
       .detail-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
       .detail-change-wrap { display: flex; flex-direction: column; gap: 10px; margin-top: 24px; }
 
