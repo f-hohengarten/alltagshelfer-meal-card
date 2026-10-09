@@ -115,6 +115,11 @@ function parseIngredientJs(raw) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// Grid/week tiles load HA's 512px variant of uploaded images instead of the original
+function thumbUrl(img) {
+  return String(img ?? '').replace(/^(\/api\/image\/serve\/[0-9a-f]+)\/original$/, '$1/512x512');
+}
+
 function x(s) {
   return String(s ?? '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -829,7 +834,7 @@ class AlhMealCard extends HTMLElement {
               <div class="meal-entry" draggable="true" data-plan-uid="${x(p.uid)}"
                 data-action="open-detail-from-plan" data-recipe-uid="${x(meta.recipe_id)}"
                 data-iso="${x(iso)}" data-slot="${x(slot)}">
-                ${rmeta.img ? `<img class="meal-entry__img" src="${x(rmeta.img)}" alt=""
+                ${rmeta.img ? `<img class="meal-entry__img" src="${x(thumbUrl(rmeta.img))}" alt=""
                   loading="lazy" draggable="false" onerror="this.style.display='none'" />` : ''}
                 <div class="meal-entry__body">
                   <div class="meal-entry__title">${x(p.summary)}</div>
@@ -1000,7 +1005,7 @@ class AlhMealCard extends HTMLElement {
       <article class="recipe-card" data-action="open-detail" data-recipe-uid="${x(recipe.uid)}">
         <div class="recipe-card__media">
           ${meta.img ? `
-            <img class="recipe-card__img" src="${x(meta.img)}" alt="" loading="lazy" onerror="this.remove()" />
+            <img class="recipe-card__img" src="${x(thumbUrl(meta.img))}" alt="" loading="lazy" onerror="this.remove()" />
           ` : `<svg class="recipe-card__ph" viewBox="0 0 24 24"><path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2.5v8H21V2c-2.76 0-5 2.24-5 4z"/></svg>`}
           ${score ? `<span class="nutri-badge recipe-card__score" style="background:${nutriColor(score)};color:${nutriTextColor(score)}" title="Nutri-Score ${score}">${score}</span>` : ''}
           <button class="recipe-card__fav${meta.fav ? ' is-on' : ''}" data-action="toggle-fav" data-recipe-uid="${x(recipe.uid)}"
