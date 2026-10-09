@@ -516,7 +516,7 @@ class AlhMealCard extends HTMLElement {
     try {
       const unsub = await this._hass.connection.subscribeEvents((event) => {
         const eid = event.data.entity_id;
-        if (eid === this._config.recipe_entity) this._fetchRecipes();
+        if (eid === this._config.recipe_entity && !(this._migrate && !this._migrate.finished)) this._fetchRecipes();
         if (eid === this._config.plan_entity)   this._fetchPlan();
       }, 'state_changed');
       this._unsubFns.push(unsub);
@@ -525,7 +525,15 @@ class AlhMealCard extends HTMLElement {
     }
   }
 
+  // Coalesces bursts of state_changed events into one request at a time
   async _fetchRecipes() {
+    if (this._recipeFetch) { this._recipeRefetch = true; return this._recipeFetch; }
+    this._recipeFetch = this._doFetchRecipes();
+    try { await this._recipeFetch; } finally { this._recipeFetch = null; }
+    if (this._recipeRefetch) { this._recipeRefetch = false; return this._fetchRecipes(); }
+  }
+
+  async _doFetchRecipes() {
     try {
       const result = await this._hass.callService(
         'todo', 'get_items',
@@ -541,6 +549,7 @@ class AlhMealCard extends HTMLElement {
       const fallback = this._hass.states[this._config.recipe_entity]?.attributes?.items ?? [];
       this._recipes = fallback.filter(r => r.summary !== CONFIG_ITEM_MARKER);
     }
+    this._recipesLoaded = true;
     this._render();
   }
 
@@ -579,6 +588,52 @@ class AlhMealCard extends HTMLElement {
 
   _svc(entity_id, service, data) {
     return this._hass.callService('todo', service, data, { entity_id });
+  }
+
+  // Stores an image in HA's image_upload store and returns its public URL.
+  // Data URLs inside the todo description make every get_items call megabytes big.
+  async _uploadImage(dataUrl) {
+    const blob = await (await fetch(dataUrl)).blob();
+    const body = new FormData();
+    body.append('file', blob, `rezept.${(blob.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg')}`);
+    const res = await this._hass.fetchWithAuth('/api/image/upload', { method: 'POST', body });
+    if (!res.ok) throw new Error(`Upload fehlgeschlagen (${res.status})`);
+    const { id } = await res.json();
+    return `/api/image/serve/${id}/original`;
+  }
+
+  // Falls back to the data URL if the upload fails, so no image is lost
+  async _ensureImageUrl(img) {
+    if (!img || !img.startsWith('data:')) return img;
+    try { return await this._uploadImage(img); }
+    catch (e) { console.warn('[alh-meal-card] uploadImage:', e); return img; }
+  }
+
+  _embeddedImageCount() {
+    return this._recipes.filter(r => String(r.description || '').includes('\n[IMG]data:')).length;
+  }
+
+  async _migrateImages() {
+    const todo = this._recipes.filter(r => String(r.description || '').includes('\n[IMG]data:'));
+    this._migrate = { done: 0, total: todo.length, error: '' };
+    this._render();
+    for (const r of todo) {
+      try {
+        const meta = parseRecipeMeta(r.description);
+        const img  = await this._uploadImage(meta.img);
+        await this._svc(this._config.recipe_entity, 'update_item', {
+          item: r.uid, description: encodeRecipeMeta({ ...meta, img }),
+        });
+        this._migrate.done++;
+      } catch (e) {
+        console.error('[alh-meal-card] migrateImages:', r.summary, e);
+        this._migrate.error = `„${r.summary}“: ${e.message || e}`;
+        break;
+      }
+      this._render();
+    }
+    this._migrate.finished = true;
+    await this._fetchRecipes();
   }
 
   // ─── Render ─────────────────────────────────────────────────────────────────
@@ -908,7 +963,7 @@ class AlhMealCard extends HTMLElement {
         </div>
         ${filtered.length === 0 ? `
           <div class="empty">
-            ${anyFilter ? 'Keine Rezepte passen zu deiner Auswahl.' : 'Noch keine Rezepte.'}
+            ${anyFilter ? 'Keine Rezepte passen zu deiner Auswahl.' : this._recipesLoaded ? 'Noch keine Rezepte.' : 'Rezepte werden geladen …'}
             ${anyFilter ? '<br><button class="btn btn--ghost btn--sm empty__btn" data-filter="reset">Filter zurücksetzen</button>' : ''}
           </div>
         ` : `
@@ -1633,6 +1688,21 @@ class AlhMealCard extends HTMLElement {
         <div class="form__section-label">Kategorien</div>
         <button class="btn btn--ghost btn--sm" data-action="open-manage-cats">Kategorien verwalten</button>
 
+        ${(() => {
+          const m = this._migrate;
+          const n = this._embeddedImageCount();
+          if (!n && !m) return '';
+          let status = '';
+          if (m && !m.finished) status = `Lagere aus … ${m.done} / ${m.total}`;
+          else if (m?.error) status = `Abgebrochen nach ${m.done} / ${m.total}. ${x(m.error)}`;
+          else if (m) status = `${m.done} Bilder ausgelagert.`;
+          return `
+            <div class="form__section-label">Bilder</div>
+            ${n ? `<button class="btn btn--ghost btn--sm" data-action="migrate-images"${m && !m.finished ? ' disabled' : ''}>${n} eingebettete Bilder auslagern</button>` : ''}
+            <p class="settings__hint">${status || 'Eingebettete Bilder machen die Rezeptliste groß und langsam. Beim Auslagern landen sie im Bildspeicher von Home Assistant, im Rezept bleibt nur der Link.'}</p>
+          `;
+        })()}
+
         <div class="form__actions">
           <button class="btn btn--ghost" data-action="cancel-settings">Abbrechen</button>
           <button class="btn btn--primary" data-action="save-settings">Speichern</button>
@@ -2177,8 +2247,12 @@ class AlhMealCard extends HTMLElement {
           const canvas = document.createElement('canvas');
           canvas.width = w; canvas.height = h;
           canvas.getContext('2d').drawImage(raw, 0, 0, w, h);
-          this._recipeForm.img = canvas.toDataURL('image/jpeg', 0.78);
+          const form = this._recipeForm;
+          form.img = canvas.toDataURL('image/jpeg', 0.78);
           this._render();
+          this._ensureImageUrl(form.img).then(url => {
+            if (this._recipeForm === form && url !== form.img) { form.img = url; this._render(); }
+          });
         };
         raw.src = ev.target.result;
       };
@@ -2474,6 +2548,8 @@ class AlhMealCard extends HTMLElement {
       this._activePanel = null;
       this._render();
     }));
+    const migrateBtn = root.querySelector('[data-action="migrate-images"]');
+    if (migrateBtn) migrateBtn.addEventListener('click', () => this._migrateImages());
     const saveSettings = root.querySelector('[data-action="save-settings"]');
     if (saveSettings) saveSettings.addEventListener('click', () => {
       const shop   = root.querySelector('.settings__shop')?.value ?? '';
@@ -2680,7 +2756,7 @@ class AlhMealCard extends HTMLElement {
     }, 30);
   }
 
-  _submitRecipe() {
+  async _submitRecipe() {
     const titleEl = this.shadowRoot.querySelector('.form__title-input');
     const noteEl  = this.shadowRoot.querySelector('.form__note');
     const title   = (titleEl?.value ?? this._recipeForm.title).trim();
@@ -2696,9 +2772,10 @@ class AlhMealCard extends HTMLElement {
       .map(t => String(t).replace(/\s*\n\s*/g, ' ').trim()).filter(Boolean);
     const time    = this.shadowRoot.querySelector('.form__time')?.value ?? f.time;
     const src     = (this.shadowRoot.querySelector('.form__src')?.value ?? f.src).trim();
-    const { uid, score, srv, fav, ingredients, img } = f;
+    const { uid, score, srv, fav, ingredients } = f;
     const cats = f.cats.length ? f.cats : ['sonstiges'];
     const note = joinNote(steps, f.note);
+    const img  = await this._ensureImageUrl(f.img);
     const desc = encodeRecipeMeta({ cats, score, srv, time, fav, src, note, ingredients, img });
 
     if (uid) {
@@ -2839,7 +2916,7 @@ class AlhMealCard extends HTMLElement {
       const srv   = parseInt(r.srv) || 4;
       const steps = Array.isArray(r.steps) ? r.steps.map(t => String(t).replace(/\s*\n\s*/g, ' ').trim()).filter(Boolean) : [];
       const note  = joinNote(steps, String(r.note ?? ''));
-      const img   = String(r.img ?? '').trim();
+      const img   = await this._ensureImageUrl(String(r.img ?? '').trim());
       const time  = parseInt(r.time) || 0;
       const fav   = !!r.fav;
       const src   = String(r.src ?? '').trim();
